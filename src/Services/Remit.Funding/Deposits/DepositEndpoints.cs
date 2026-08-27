@@ -18,6 +18,7 @@ public static class DepositEndpoints
             RequestDepositCommand command,
             IDepositRepository deposits,
             IOutbox outbox,
+            IUnitOfWork unitOfWork,
             TimeProvider clock,
             CancellationToken cancellationToken) =>
         {
@@ -38,7 +39,8 @@ public static class DepositEndpoints
 
             var deposit = Deposit.Request(command.AccountId, amount, clock);
 
-            // Both writes belong to one unit of work; see ADR-0003 for the real transaction boundary.
+            // The deposit row and its outbox message are one unit of work (ADR-0003):
+            // both are staged here and written by a single commit below.
             await deposits.SaveAsync(deposit, cancellationToken);
             await outbox.EnqueueAsync(
                 new OutboxMessage(
@@ -48,6 +50,7 @@ public static class DepositEndpoints
                     OccurredAt: deposit.RequestedAt,
                     CorrelationId: deposit.Id.ToString()),
                 cancellationToken);
+            await unitOfWork.CommitAsync(cancellationToken);
 
             return Results.Accepted($"/deposits/{deposit.Id}", ToResponse(deposit));
         });

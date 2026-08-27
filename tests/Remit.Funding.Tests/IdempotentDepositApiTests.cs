@@ -1,11 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
-using Microsoft.AspNetCore.Mvc.Testing;
 using Remit.Funding.Deposits;
 
 namespace Remit.Funding.Tests;
 
-public class IdempotentDepositApiTests(WebApplicationFactory<Program> factory) : IClassFixture<WebApplicationFactory<Program>>
+public class IdempotentDepositApiTests(InMemoryApiFactory factory) : IClassFixture<InMemoryApiFactory>
 {
     private static readonly RequestDepositCommand Command = new(Guid.NewGuid(), 25m, "EUR");
 

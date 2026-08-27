@@ -14,12 +14,15 @@ namespace Remit.BuildingBlocks.Idempotency;
 ///  3. Key seen before, different hash → 422. The client reused a key for a different request.
 ///  4. Key claimed by an in-flight request → 409. Retry after the first one completes.
 ///  5. Otherwise run the pipeline, capture the response, store it, return it.
+///
+/// The store is resolved per request (method injection) so it can be a scoped, database-backed
+/// implementation while the middleware itself stays a singleton.
 /// </summary>
-public sealed class IdempotencyMiddleware(RequestDelegate next, IIdempotencyStore store)
+public sealed class IdempotencyMiddleware(RequestDelegate next)
 {
     public const string HeaderName = "Idempotency-Key";
 
-    public async Task InvokeAsync(HttpContext context)
+    public async Task InvokeAsync(HttpContext context, IIdempotencyStore store)
     {
         if (!HttpMethods.IsPost(context.Request.Method))
         {

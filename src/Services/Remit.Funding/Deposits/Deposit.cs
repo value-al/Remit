@@ -17,6 +17,9 @@ public enum DepositStatus
     Failed,
 }
 
+/// <summary>One recorded edge of the state machine, kept as an audit trail.</summary>
+public sealed record DepositTransition(DepositStatus From, DepositStatus To, DateTimeOffset At);
+
 /// <summary>
 /// A deposit is an explicit state machine (ADR-0002). Every transition is named and the
 /// allowed edges are the whole list below; anything else throws. PSP retries and duplicate
@@ -33,7 +36,7 @@ public sealed class Deposit
             [DepositStatus.Failed] = [],
         };
 
-    private readonly List<(DepositStatus From, DepositStatus To, DateTimeOffset At)> _history = [];
+    private readonly List<DepositTransition> _history = [];
 
     private Deposit(Guid id, Guid accountId, Money amount, DateTimeOffset requestedAt)
     {
@@ -44,14 +47,19 @@ public sealed class Deposit
         RequestedAt = requestedAt;
     }
 
-    public Guid Id { get; }
-    public Guid AccountId { get; }
-    public Money Amount { get; }
+    // Materialisation constructor for the persistence layer; never used by domain code.
+    private Deposit()
+    {
+    }
+
+    public Guid Id { get; private set; }
+    public Guid AccountId { get; private set; }
+    public Money Amount { get; private set; }
     public DepositStatus Status { get; private set; }
-    public DateTimeOffset RequestedAt { get; }
+    public DateTimeOffset RequestedAt { get; private set; }
     public string? PspReference { get; private set; }
     public string? FailureReason { get; private set; }
-    public IReadOnlyList<(DepositStatus From, DepositStatus To, DateTimeOffset At)> History => _history;
+    public IReadOnlyList<DepositTransition> History => _history;
 
     public static Deposit Request(Guid accountId, Money amount, TimeProvider clock)
     {
@@ -86,7 +94,7 @@ public sealed class Deposit
             throw new InvalidDepositTransitionException(Id, Status, to);
         }
 
-        _history.Add((Status, to, clock.GetUtcNow()));
+        _history.Add(new DepositTransition(Status, to, clock.GetUtcNow()));
         Status = to;
     }
 }

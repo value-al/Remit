@@ -20,21 +20,32 @@ like this has to make is **made, written down, and shown running**.
 | `Idempotency-Key` at the edge, state machines at the core | [ADR-0002](docs/adr/0002-idempotency-keys-and-state-machines.md) |
 | Outbox in every service, never a dual write | [ADR-0003](docs/adr/0003-outbox-over-dual-write.md) |
 | Double-entry ledger, balanced by construction | [ADR-0004](docs/adr/0004-double-entry-ledger.md) |
+| PostgreSQL per service, EF Core migrations, polling relay with SKIP LOCKED, xmin concurrency | [ADR-0005](docs/adr/0005-persistence-and-relay.md) |
 | Context and container diagrams, PCI scope boundary | [C4](docs/architecture/c4-context.md) |
 
 ## What runs today
 
-- `Remit.BuildingBlocks` — `Money`, the idempotency middleware and store, the outbox contract.
-- `Remit.Funding` — `POST /deposits` (idempotent, 202 + outbox message) and `GET /deposits/{id}`;
-  `Deposit` as an explicit state machine.
+- `Remit.BuildingBlocks` — `Money`, the idempotency middleware and store contract, the outbox
+  contract, the unit of work.
+- `Remit.Funding` — `POST /deposits` (idempotent, 202, deposit + outbox row in one transaction)
+  and `GET /deposits/{id}`; `Deposit` as an explicit state machine with its transitions
+  persisted; **PostgreSQL** via EF Core with checked-in migrations, one schema per service;
+  idempotency keys in a table whose primary key is the claim; an **outbox relay** hosted
+  service that drains `funding.outbox` with `FOR UPDATE SKIP LOCKED` and publishes to a
+  **RabbitMQ** topic exchange with publisher confirms.
 - `Remit.Ledger` — `JournalEntry` that cannot be constructed unbalanced.
-- Tests for all of the above, including the replay / mismatch / conflict behaviour of the
-  idempotency layer through the real HTTP pipeline.
+- Tests: the idempotency contract through the HTTP pipeline in memory; and with Testcontainers,
+  real PostgreSQL + RabbitMQ — deposit and outbox row written together, message delivered and
+  row marked sent, replay across a database round trip, eight concurrent claims on one key
+  admitting exactly one deposit.
+
+Without a connection string the service runs entirely in memory. With one, it runs on
+PostgreSQL; with a `RabbitMq` section as well, the relay publishes.
 
 ```sh
-dotnet test
-docker compose up -d      # PostgreSQL, RabbitMQ, Redis, Jaeger — used from week 4
-dotnet run --project src/Services/Remit.Funding
+dotnet test                 # needs Docker for the PostgreSQL/RabbitMQ tests
+docker compose up -d        # PostgreSQL, RabbitMQ, Redis, Jaeger
+dotnet run --project src/Services/Remit.Funding   # Development: migrates, relays to RabbitMQ
 ```
 
 ```sh
@@ -49,7 +60,7 @@ curl -X POST localhost:5000/deposits/ \
 
 | Week | Lands |
 |---|---|
-| 4 | PostgreSQL persistence, outbox table and relay to RabbitMQ |
+| 4 | ~~PostgreSQL persistence, outbox table and relay to RabbitMQ~~ — done |
 | 5 | PSP adapter boundary, two simulated providers, routing by currency and success rate; webhooks verified with [Countersign](https://github.com/value-al/Countersign) |
 | 6 | Ledger consumer posts settlements; withdrawals; OpenTelemetry end to end |
 | 7 | AKS deployment with infrastructure as code; Key Vault; managed identity |
