@@ -1,0 +1,25 @@
+# Local infrastructure for Remit. Services are added here as they land.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: remit
+      POSTGRES_PASSWORD: remit
+      POSTGRES_DB: remit
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    ports: ["5672:5672", "15672:15672"]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  jaeger:
+    image: jaegertracing/jaeger:2.5.0
+    ports: ["16686:16686", "4317:4317", "4318:4318"]
+
+volumes:
+  pgdata:

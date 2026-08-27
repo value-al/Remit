@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/BuildingBlocks/">
+    <Project Path="src/BuildingBlocks/Remit.BuildingBlocks/Remit.BuildingBlocks.csproj" />
+  </Folder>
+  <Folder Name="/src/Services/">
+    <Project Path="src/Services/Remit.Funding/Remit.Funding.csproj" />
+    <Project Path="src/Services/Remit.Ledger/Remit.Ledger.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Remit.Funding.Tests/Remit.Funding.Tests.csproj" />
+    <Project Path="tests/Remit.Ledger.Tests/Remit.Ledger.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,17 @@
+<Project>
+
+  <!-- Shared settings for every project in the repo. -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <Authors>Value.al</Authors>
+    <Company>Value.al</Company>
+    <Copyright>Copyright (c) 2026 Value.al</Copyright>
+  </PropertyGroup>
+
+</Project>
