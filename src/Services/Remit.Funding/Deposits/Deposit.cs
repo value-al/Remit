@@ -57,6 +57,7 @@ public sealed class Deposit
     public Money Amount { get; private set; }
     public DepositStatus Status { get; private set; }
     public DateTimeOffset RequestedAt { get; private set; }
+    public string? Provider { get; private set; }
     public string? PspReference { get; private set; }
     public string? FailureReason { get; private set; }
     public IReadOnlyList<DepositTransition> History => _history;
@@ -71,9 +72,10 @@ public sealed class Deposit
         return new Deposit(Guid.NewGuid(), accountId, amount, clock.GetUtcNow());
     }
 
-    public void MarkSubmitted(string pspReference, TimeProvider clock)
+    public void MarkSubmitted(string provider, string pspReference, TimeProvider clock)
     {
         Transition(DepositStatus.SubmittedToPsp, clock);
+        Provider = provider;
         PspReference = pspReference;
     }
 

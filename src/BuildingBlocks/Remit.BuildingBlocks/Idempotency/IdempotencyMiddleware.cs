@@ -24,7 +24,8 @@ public sealed class IdempotencyMiddleware(RequestDelegate next)
 
     public async Task InvokeAsync(HttpContext context, IIdempotencyStore store)
     {
-        if (!HttpMethods.IsPost(context.Request.Method))
+        if (!HttpMethods.IsPost(context.Request.Method)
+            || context.GetEndpoint()?.Metadata.GetMetadata<IdempotencyExemptMetadata>() is not null)
         {
             await next(context);
             return;

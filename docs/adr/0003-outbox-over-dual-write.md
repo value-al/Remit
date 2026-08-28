@@ -17,7 +17,7 @@ RabbitMQ, marking rows as sent. Delivery is therefore at-least-once, and every c
 is required to be idempotent on the message id (ADR-0002 applies downstream as well).
 
 The in-memory `InMemoryOutbox` exists so the request handler has the right shape from day
-one; the PostgreSQL outbox and the relay arrive with the persistence work in week four.
+one; the PostgreSQL outbox and the relay are in ADR-0005.
 
 ## Alternatives considered
 

@@ -27,6 +27,7 @@ public sealed class FundingDbContext(DbContextOptions<FundingDbContext> options)
             b.Property(d => d.AccountId).HasColumnName("account_id");
             b.Property(d => d.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
             b.Property(d => d.RequestedAt).HasColumnName("requested_at");
+            b.Property(d => d.Provider).HasColumnName("provider").HasMaxLength(64);
             b.Property(d => d.PspReference).HasColumnName("psp_reference").HasMaxLength(128);
             b.Property(d => d.FailureReason).HasColumnName("failure_reason").HasMaxLength(512);
             b.HasIndex(d => new { d.AccountId, d.RequestedAt });

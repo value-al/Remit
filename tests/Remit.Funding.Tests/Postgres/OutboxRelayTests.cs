@@ -40,11 +40,11 @@ public class OutboxRelayTests(PostgresApiFactory factory) : IClassFixture<Postgr
         {
             var db = scope.ServiceProvider.GetRequiredService<FundingDbContext>();
             var deposit = await db.Deposits.SingleAsync(d => d.Id == created.Id);
-            Assert.Equal(DepositStatus.Requested, deposit.Status);
+            Assert.Equal(DepositStatus.SubmittedToPsp, deposit.Status);
             Assert.Equal(75m, deposit.Amount.Amount);
 
-            var outbox = await db.Outbox.SingleAsync(o => o.CorrelationId == created.Id.ToString());
-            Assert.Equal("funding.deposit.requested.v1", outbox.Type);
+            var types = await db.Outbox.Where(o => o.CorrelationId == created.Id.ToString()).Select(o => o.Type).ToListAsync();
+            Assert.Equal(["funding.deposit.requested.v1", "funding.deposit.submitted.v1"], types.Order());
         }
 
         // The relay delivers it. Other tests in this class publish to the same exchange, so
@@ -58,7 +58,7 @@ public class OutboxRelayTests(PostgresApiFactory factory) : IClassFixture<Postgr
             {
                 await Task.Delay(100);
             }
-            else if (next.BasicProperties.CorrelationId == created.Id.ToString())
+            else if (next.BasicProperties.CorrelationId == created.Id.ToString() && next.BasicProperties.Type == "funding.deposit.requested.v1")
             {
                 delivered = next;
             }
@@ -77,7 +77,7 @@ public class OutboxRelayTests(PostgresApiFactory factory) : IClassFixture<Postgr
         {
             using var scope = factory.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<FundingDbContext>();
-            sent = await db.Outbox.AsNoTracking().SingleOrDefaultAsync(o => o.CorrelationId == created.Id.ToString() && o.SentAt != null);
+            sent = await db.Outbox.AsNoTracking().SingleOrDefaultAsync(o => o.CorrelationId == created.Id.ToString() && o.Type == "funding.deposit.requested.v1" && o.SentAt != null);
             if (sent is null)
             {
                 await Task.Delay(100);

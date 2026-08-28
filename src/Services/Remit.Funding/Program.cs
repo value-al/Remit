@@ -1,10 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Remit.BuildingBlocks;
 using Remit.BuildingBlocks.Idempotency;
 using Remit.BuildingBlocks.Outbox;
 using Remit.Funding.Deposits;
 using Remit.Funding.Messaging;
 using Remit.Funding.Persistence;
+using Remit.Funding.Psp;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -43,6 +45,24 @@ else
     builder.Services.AddSingleton<IUnitOfWork, NoOpUnitOfWork>();
 }
 
+// Payment providers (ADR-0006). Configured under "Psp:Providers"; two simulators by default.
+builder.Services.Configure<PspOptions>(builder.Configuration.GetSection(PspOptions.Section));
+builder.Services.PostConfigure<PspOptions>(o =>
+{
+    if (o.Providers.Count == 0)
+    {
+        o.Providers["alpha"] = new ProviderOptions { Currencies = ["EUR", "USD", "GBP"], WebhookSecret = "whsec_alpha_dev" };
+        o.Providers["beta"] = new ProviderOptions { Currencies = ["EUR", "GBP"], WebhookSecret = "whsec_beta_dev" };
+    }
+});
+builder.Services.AddSingleton<IEnumerable<IPaymentProvider>>(sp =>
+    sp.GetRequiredService<IOptions<PspOptions>>().Value.Providers
+        .Select(kv => (IPaymentProvider)SimulatedProvider.FromOptions(kv.Key, kv.Value))
+        .ToList());
+builder.Services.AddSingleton<IProviderHealth>(new InMemoryProviderHealth());
+builder.Services.AddSingleton<PspRouter>();
+builder.Services.AddSingleton<WebhookVerifiers>();
+
 var app = builder.Build();
 
 if (!string.IsNullOrWhiteSpace(connectionString) && app.Configuration.GetValue("Database:MigrateOnStartup", app.Environment.IsDevelopment()))
@@ -55,6 +75,7 @@ if (!string.IsNullOrWhiteSpace(connectionString) && app.Configuration.GetValue("
 app.UseIdempotency();
 app.MapGet("/", () => Results.Text("Remit Funding — see /deposits"));
 app.MapDeposits();
+app.MapPspWebhooks();
 
 await app.RunAsync();
 

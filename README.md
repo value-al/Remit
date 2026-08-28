@@ -21,6 +21,7 @@ like this has to make is **made, written down, and shown running**.
 | Outbox in every service, never a dual write | [ADR-0003](docs/adr/0003-outbox-over-dual-write.md) |
 | Double-entry ledger, balanced by construction | [ADR-0004](docs/adr/0004-double-entry-ledger.md) |
 | PostgreSQL per service, EF Core migrations, polling relay with SKIP LOCKED, xmin concurrency | [ADR-0005](docs/adr/0005-persistence-and-relay.md) |
+| One PSP boundary with three outcomes; route by currency then health; submit sync, settle by signed webhook | [ADR-0006](docs/adr/0006-psp-boundary-and-webhooks.md) |
 | Context and container diagrams, PCI scope boundary | [C4](docs/architecture/c4-context.md) |
 
 ## What runs today
@@ -33,11 +34,21 @@ like this has to make is **made, written down, and shown running**.
   idempotency keys in a table whose primary key is the claim; an **outbox relay** hosted
   service that drains `funding.outbox` with `FOR UPDATE SKIP LOCKED` and publishes to a
   **RabbitMQ** topic exchange with publisher confirms.
+- **PSP boundary** — `IPaymentProvider` with exactly three outcomes (accepted / rejected /
+  unavailable); `PspRouter` filters by currency, ranks by a sliding-window success rate, demotes
+  degraded providers, and falls through outages; two simulated providers from configuration.
+  `POST /deposits` submits synchronously and returns the provider and reference.
+- **Signed webhooks** at `POST /webhooks/psp/{provider}`, verified with
+  [Countersign](https://github.com/value-al/Countersign) over the raw bytes — per-provider webhook
+  secret, `timestamp.body` canonical form, five-minute replay window — before anything is parsed.
+  Duplicates and strays are acknowledged with `applied: false`, never applied twice.
 - `Remit.Ledger` — `JournalEntry` that cannot be constructed unbalanced.
 - Tests: the idempotency contract through the HTTP pipeline in memory; and with Testcontainers,
   real PostgreSQL + RabbitMQ — deposit and outbox row written together, message delivered and
   row marked sent, replay across a database round trip, eight concurrent claims on one key
-  admitting exactly one deposit.
+  admitting exactly one deposit. Router tests for every routing rule; webhook tests that sign
+  with Countersign's `RequestSigner` and are verified by its `WebhookVerifier` — forged key,
+  stale timestamp, duplicate, wrong provider, failure with reason.
 
 Without a connection string the service runs entirely in memory. With one, it runs on
 PostgreSQL; with a `RabbitMq` section as well, the relay publishes.
@@ -53,7 +64,17 @@ curl -X POST localhost:5000/deposits/ \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: 5f1c9a0e-1d3b-4a8c-9a7e-2c1f0b6d8e44' \
   -d '{"accountId":"11111111-1111-1111-1111-111111111111","amount":100,"currency":"EUR"}'
-# → 202 Accepted. Send it again: same response, plus  Idempotent-Replayed: true
+# → 202 Accepted, status SubmittedToPsp, provider alpha. Send it again: same response, plus
+#   Idempotent-Replayed: true
+
+# The provider settles it later with a signed webhook. Signing the exact bytes with the
+# provider's webhook secret (alpha: whsec_alpha_dev), Stripe-style {timestamp}.{body}:
+BODY='{"eventId":"evt_1","depositId":"<id>","reference":"<reference>","status":"settled"}'
+TS=$(date +%s)
+SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac whsec_alpha_dev | cut -d' ' -f2)
+curl -X POST localhost:5000/webhooks/psp/alpha -H 'Content-Type: application/json' \
+  -H "X-Timestamp: $TS" -H "X-Signature: $SIG" -d "$BODY"
+# → {"applied":true,"status":"Settled"}. Send it again → {"applied":false,"reason":"already-final"}
 ```
 
 ## Roadmap
@@ -61,7 +82,7 @@ curl -X POST localhost:5000/deposits/ \
 | Week | Lands |
 |---|---|
 | 4 | ~~PostgreSQL persistence, outbox table and relay to RabbitMQ~~ — done |
-| 5 | PSP adapter boundary, two simulated providers, routing by currency and success rate; webhooks verified with [Countersign](https://github.com/value-al/Countersign) |
+| 5 | ~~PSP adapter boundary, two simulated providers, routing by currency and success rate; webhooks verified with Countersign~~ — done |
 | 6 | Ledger consumer posts settlements; withdrawals; OpenTelemetry end to end |
 | 7 | AKS deployment with infrastructure as code; Key Vault; managed identity |
 | 8 | Reconciliation against a statement file; exceptions endpoint |

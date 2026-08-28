@@ -14,10 +14,11 @@ public class DepositStateMachineTests
     public void Happy_path_requested_submitted_settled()
     {
         var d = NewDeposit();
-        d.MarkSubmitted("psp-ref-1", _clock);
+        d.MarkSubmitted("alpha", "psp-ref-1", _clock);
         d.MarkSettled(_clock);
 
         Assert.Equal(DepositStatus.Settled, d.Status);
+        Assert.Equal("alpha", d.Provider);
         Assert.Equal("psp-ref-1", d.PspReference);
         Assert.True(d.IsTerminal);
         Assert.Equal(2, d.History.Count);
@@ -27,7 +28,7 @@ public class DepositStateMachineTests
     public void A_duplicate_settlement_webhook_cannot_settle_twice()
     {
         var d = NewDeposit();
-        d.MarkSubmitted("psp-ref-1", _clock);
+        d.MarkSubmitted("alpha", "psp-ref-1", _clock);
         d.MarkSettled(_clock);
 
         var ex = Assert.Throws<InvalidDepositTransitionException>(() => d.MarkSettled(_clock));
@@ -49,7 +50,7 @@ public class DepositStateMachineTests
         d.MarkFailed("card declined", _clock);
 
         Assert.True(d.IsTerminal);
-        Assert.Throws<InvalidDepositTransitionException>(() => d.MarkSubmitted("late", _clock));
+        Assert.Throws<InvalidDepositTransitionException>(() => d.MarkSubmitted("alpha", "late", _clock));
     }
 
     [Fact]
