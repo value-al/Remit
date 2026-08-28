@@ -22,6 +22,7 @@ like this has to make is **made, written down, and shown running**.
 | Double-entry ledger, balanced by construction | [ADR-0004](docs/adr/0004-double-entry-ledger.md) |
 | PostgreSQL per service, EF Core migrations, polling relay with SKIP LOCKED, xmin concurrency | [ADR-0005](docs/adr/0005-persistence-and-relay.md) |
 | One PSP boundary with three outcomes; route by currency then health; submit sync, settle by signed webhook | [ADR-0006](docs/adr/0006-psp-boundary-and-webhooks.md) |
+| Ledger consumes with an inbox (exactly-once posting); withdrawals mirror deposits; one trace per money movement | [ADR-0007](docs/adr/0007-ledger-consumer-withdrawals-telemetry.md) |
 | Context and container diagrams, PCI scope boundary | [C4](docs/architecture/c4-context.md) |
 
 ## What runs today
@@ -42,13 +43,27 @@ like this has to make is **made, written down, and shown running**.
   [Countersign](https://github.com/value-al/Countersign) over the raw bytes — per-provider webhook
   secret, `timestamp.body` canonical form, five-minute replay window — before anything is parsed.
   Duplicates and strays are acknowledged with `applied: false`, never applied twice.
-- `Remit.Ledger` — `JournalEntry` that cannot be constructed unbalanced.
+- **Withdrawals** — `POST /withdrawals` mirrors deposits: advisory balance check against the
+  ledger (422 when short), same state machine, same router (`PayoutAsync`), same signed webhook
+  with `withdrawalId`.
+- `Remit.Ledger` — a service now. Consumes `funding.deposit.settled.v1` and
+  `funding.withdrawal.paid.v1` from RabbitMQ through the shared `RabbitMqConsumer` (durable
+  queue, manual acks, dead-letter after two failures) and posts journal entries **exactly once**
+  via an inbox row written in the same transaction. `GET /accounts/{id}/balance?currency=EUR`
+  derives the balance from the journal every time; `GET /entries?correlationId=` shows the
+  postings behind any movement.
+- **OpenTelemetry** in both services: ASP.NET Core, HttpClient, Npgsql and every `Remit.*` span;
+  W3C trace context carried in RabbitMQ headers, so one trace runs request → relay → publish →
+  consume → postings. OTLP export to the compose file's Jaeger when `Otel:Endpoint` is set.
 - Tests: the idempotency contract through the HTTP pipeline in memory; and with Testcontainers,
   real PostgreSQL + RabbitMQ — deposit and outbox row written together, message delivered and
   row marked sent, replay across a database round trip, eight concurrent claims on one key
   admitting exactly one deposit. Router tests for every routing rule; webhook tests that sign
   with Countersign's `RequestSigner` and are verified by its `WebhookVerifier` — forged key,
-  stale timestamp, duplicate, wrong provider, failure with reason.
+  stale timestamp, duplicate, wrong provider, failure with reason. Ledger tests on real PostgreSQL:
+  same message twice posts once, six concurrent deliveries post once, balances per currency. And
+  one **end-to-end** test hosting Funding and Ledger on the same containers: deposit → signed
+  webhook → relay → broker → consumer → wallet balance.
 
 Without a connection string the service runs entirely in memory. With one, it runs on
 PostgreSQL; with a `RabbitMq` section as well, the relay publishes.
@@ -56,7 +71,9 @@ PostgreSQL; with a `RabbitMq` section as well, the relay publishes.
 ```sh
 dotnet test                 # needs Docker for the PostgreSQL/RabbitMQ tests
 docker compose up -d        # PostgreSQL, RabbitMQ, Redis, Jaeger
-dotnet run --project src/Services/Remit.Funding   # Development: migrates, relays to RabbitMQ
+dotnet run --project src/Services/Remit.Funding   # :5000 — migrates, relays to RabbitMQ
+dotnet run --project src/Services/Remit.Ledger    # :5100 — migrates, consumes, serves balances
+# Traces: http://localhost:16686 (Jaeger) — search service "funding" or "ledger"
 ```
 
 ```sh
@@ -75,6 +92,10 @@ SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac whsec_alpha_dev 
 curl -X POST localhost:5000/webhooks/psp/alpha -H 'Content-Type: application/json' \
   -H "X-Timestamp: $TS" -H "X-Signature: $SIG" -d "$BODY"
 # → {"applied":true,"status":"Settled"}. Send it again → {"applied":false,"reason":"already-final"}
+
+# A moment later the ledger has posted it:
+curl "localhost:5100/accounts/11111111-1111-1111-1111-111111111111/balance?currency=EUR"
+# → {"accountId":"1111…","currency":"EUR","balance":100,"postings":1}
 ```
 
 ## Roadmap
@@ -83,7 +104,7 @@ curl -X POST localhost:5000/webhooks/psp/alpha -H 'Content-Type: application/jso
 |---|---|
 | 4 | ~~PostgreSQL persistence, outbox table and relay to RabbitMQ~~ — done |
 | 5 | ~~PSP adapter boundary, two simulated providers, routing by currency and success rate; webhooks verified with Countersign~~ — done |
-| 6 | Ledger consumer posts settlements; withdrawals; OpenTelemetry end to end |
+| 6 | ~~Ledger consumer posts settlements; withdrawals; OpenTelemetry end to end~~ — done |
 | 7 | AKS deployment with infrastructure as code; Key Vault; managed identity |
 | 8 | Reconciliation against a statement file; exceptions endpoint |
 | 9 | SLO document; STRIDE threat model of the deposit flow |
@@ -91,9 +112,9 @@ curl -X POST localhost:5000/webhooks/psp/alpha -H 'Content-Type: application/jso
 ## Layout
 
 ```
-src/BuildingBlocks/Remit.BuildingBlocks   cross-cutting primitives
+src/BuildingBlocks/Remit.BuildingBlocks   Money, idempotency, outbox, messaging, telemetry
 src/Services/Remit.Funding                deposits & withdrawals (HTTP)
-src/Services/Remit.Ledger                 journal
+src/Services/Remit.Ledger                 journal, consumer, balances (HTTP)
 tests/                                    one test project per service
 docs/adr/                                 architecture decision records
 docs/architecture/                        C4 diagrams

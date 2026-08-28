@@ -8,7 +8,7 @@ namespace Remit.Funding.Tests;
 /// enough for behaviour that does not depend on persistence (the idempotency contract,
 /// validation, routing, webhooks). Two simulated providers with known webhook secrets.
 /// </summary>
-public sealed class InMemoryApiFactory : WebApplicationFactory<Program>
+public sealed class InMemoryApiFactory : WebApplicationFactory<FundingApp>
 {
     public const string AlphaSecret = "whsec_alpha_test";
     public const string BetaSecret = "whsec_beta_test";

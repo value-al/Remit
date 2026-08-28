@@ -6,15 +6,20 @@ using Remit.BuildingBlocks;
 using Remit.BuildingBlocks.Idempotency;
 using Remit.BuildingBlocks.Outbox;
 using Remit.Funding.Deposits;
+using Remit.Funding.Withdrawals;
 
 namespace Remit.Funding.Psp;
 
-/// <summary>The shape every simulated provider posts back. Real adapters translate to this.</summary>
+/// <summary>
+/// The shape every simulated provider posts back. Real adapters translate to this. Exactly one
+/// of <see cref="DepositId"/> / <see cref="WithdrawalId"/> is set.
+/// </summary>
 public sealed record PspWebhook(
     [property: JsonPropertyName("eventId")] string EventId,
-    [property: JsonPropertyName("depositId")] Guid DepositId,
     [property: JsonPropertyName("reference")] string Reference,
     [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("depositId")] Guid? DepositId = null,
+    [property: JsonPropertyName("withdrawalId")] Guid? WithdrawalId = null,
     [property: JsonPropertyName("reason")] string? Reason = null);
 
 /// <summary>One verifier per provider, each with that provider's own webhook secret.</summary>
@@ -54,7 +59,7 @@ public static class WebhookEndpoints
     public static IEndpointRouteBuilder MapPspWebhooks(this IEndpointRouteBuilder app)
     {
         // Exempt from Idempotency-Key: providers do not send one. Replays are handled by the
-        // signature's timestamp tolerance and by the deposit's state machine (ADR-0006).
+        // signature's timestamp tolerance and by the aggregates' state machines (ADR-0006).
         app.MapPost("/webhooks/psp/{provider}", HandleAsync)
             .WithTags("Webhooks")
             .ExemptFromIdempotency();
@@ -67,6 +72,7 @@ public static class WebhookEndpoints
         HttpRequest request,
         WebhookVerifiers verifiers,
         IDepositRepository deposits,
+        IWithdrawalRepository withdrawals,
         IOutbox outbox,
         IUnitOfWork unitOfWork,
         TimeProvider clock,
@@ -114,23 +120,30 @@ public static class WebhookEndpoints
             webhook = null;
         }
 
-        if (webhook is null)
+        if (webhook is null || (webhook.DepositId is null) == (webhook.WithdrawalId is null))
         {
-            return Results.BadRequest("Unreadable webhook body.");
+            return Results.BadRequest("Webhook must name exactly one of depositId or withdrawalId.");
         }
 
-        var deposit = await deposits.FindAsync(webhook.DepositId, cancellationToken);
+        return webhook.DepositId is { } depositId
+            ? await ApplyToDepositAsync(provider, webhook, depositId, deposits, outbox, unitOfWork, clock, logger, cancellationToken)
+            : await ApplyToWithdrawalAsync(provider, webhook, webhook.WithdrawalId!.Value, withdrawals, outbox, unitOfWork, clock, logger, cancellationToken);
+    }
+
+    private static async Task<IResult> ApplyToDepositAsync(
+        string provider, PspWebhook webhook, Guid depositId, IDepositRepository deposits, IOutbox outbox, IUnitOfWork unitOfWork, TimeProvider clock, ILogger logger, CancellationToken cancellationToken)
+    {
+        var deposit = await deposits.FindAsync(depositId, cancellationToken);
         if (deposit is null)
         {
             // Ack it: a 404 would make the provider retry a deposit we will never have.
-            logger.LogWarning("Webhook {EventId} from {Provider} references unknown deposit {DepositId}.", webhook.EventId, provider, webhook.DepositId);
+            logger.LogWarning("Webhook {EventId} from {Provider} references unknown deposit {DepositId}.", webhook.EventId, provider, depositId);
             return Results.Ok(new { applied = false, reason = "unknown-deposit" });
         }
 
         if (!string.Equals(deposit.Provider, provider, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(deposit.PspReference, webhook.Reference, StringComparison.Ordinal))
         {
-            // Correctly signed by a provider, but not the provider (or reference) this deposit went to.
             logger.LogWarning("Webhook {EventId} from {Provider} does not match deposit {DepositId} (provider {DepositProvider}, reference {Reference}).", webhook.EventId, provider, deposit.Id, deposit.Provider, deposit.PspReference);
             return Results.Ok(new { applied = false, reason = "reference-mismatch" });
         }
@@ -149,7 +162,7 @@ public static class WebhookEndpoints
                     messageType = "funding.deposit.failed.v1";
                     break;
                 default:
-                    return Results.BadRequest($"Unknown status '{webhook.Status}'.");
+                    return Results.BadRequest($"Unknown deposit status '{webhook.Status}'.");
             }
         }
         catch (InvalidDepositTransitionException e)
@@ -172,5 +185,52 @@ public static class WebhookEndpoints
         await unitOfWork.CommitAsync(cancellationToken);
 
         return Results.Ok(new { applied = true, status = deposit.Status.ToString() });
+    }
+
+    private static async Task<IResult> ApplyToWithdrawalAsync(
+        string provider, PspWebhook webhook, Guid withdrawalId, IWithdrawalRepository withdrawals, IOutbox outbox, IUnitOfWork unitOfWork, TimeProvider clock, ILogger logger, CancellationToken cancellationToken)
+    {
+        var withdrawal = await withdrawals.FindAsync(withdrawalId, cancellationToken);
+        if (withdrawal is null)
+        {
+            logger.LogWarning("Webhook {EventId} from {Provider} references unknown withdrawal {WithdrawalId}.", webhook.EventId, provider, withdrawalId);
+            return Results.Ok(new { applied = false, reason = "unknown-withdrawal" });
+        }
+
+        if (!string.Equals(withdrawal.Provider, provider, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(withdrawal.PspReference, webhook.Reference, StringComparison.Ordinal))
+        {
+            logger.LogWarning("Webhook {EventId} from {Provider} does not match withdrawal {WithdrawalId}.", webhook.EventId, provider, withdrawal.Id);
+            return Results.Ok(new { applied = false, reason = "reference-mismatch" });
+        }
+
+        string messageType;
+        try
+        {
+            switch (webhook.Status.ToLowerInvariant())
+            {
+                case "paid":
+                    withdrawal.MarkPaid(clock);
+                    messageType = "funding.withdrawal.paid.v1";
+                    break;
+                case "failed":
+                    withdrawal.MarkFailed(webhook.Reason ?? $"{provider} reported failure.", clock);
+                    messageType = "funding.withdrawal.failed.v1";
+                    break;
+                default:
+                    return Results.BadRequest($"Unknown withdrawal status '{webhook.Status}'.");
+            }
+        }
+        catch (InvalidWithdrawalTransitionException e)
+        {
+            logger.LogInformation("Webhook {EventId} from {Provider} ignored: {Reason}.", webhook.EventId, provider, e.Message);
+            return Results.Ok(new { applied = false, reason = "already-final", status = withdrawal.Status.ToString() });
+        }
+
+        await withdrawals.SaveAsync(withdrawal, cancellationToken);
+        await outbox.EnqueueAsync(WithdrawalEndpoints.Message(messageType, withdrawal, clock), cancellationToken);
+        await unitOfWork.CommitAsync(cancellationToken);
+
+        return Results.Ok(new { applied = true, status = withdrawal.Status.ToString() });
     }
 }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Remit.Funding.Deposits;
+using Remit.Funding.Withdrawals;
 
 namespace Remit.Funding.Persistence;
 
@@ -12,6 +13,7 @@ public sealed class FundingDbContext(DbContextOptions<FundingDbContext> options)
     public const string Schema = "funding";
 
     public DbSet<Deposit> Deposits => Set<Deposit>();
+    public DbSet<Withdrawal> Withdrawals => Set<Withdrawal>();
     public DbSet<OutboxRecord> Outbox => Set<OutboxRecord>();
     public DbSet<IdempotencyRecord> IdempotencyKeys => Set<IdempotencyRecord>();
 
@@ -52,6 +54,39 @@ public sealed class FundingDbContext(DbContextOptions<FundingDbContext> options)
 
             // Optimistic concurrency on PostgreSQL's system column: two handlers racing to
             // move the same deposit cannot both win.
+            b.Property<uint>("xmin").IsRowVersion();
+        });
+
+        modelBuilder.Entity<Withdrawal>(b =>
+        {
+            b.ToTable("withdrawals");
+            b.HasKey(w => w.Id);
+            b.Property(w => w.Id).HasColumnName("id").ValueGeneratedNever();
+            b.Property(w => w.AccountId).HasColumnName("account_id");
+            b.Property(w => w.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
+            b.Property(w => w.RequestedAt).HasColumnName("requested_at");
+            b.Property(w => w.Provider).HasColumnName("provider").HasMaxLength(64);
+            b.Property(w => w.PspReference).HasColumnName("psp_reference").HasMaxLength(128);
+            b.Property(w => w.FailureReason).HasColumnName("failure_reason").HasMaxLength(512);
+            b.HasIndex(w => new { w.AccountId, w.RequestedAt });
+
+            b.ComplexProperty(w => w.Amount, m =>
+            {
+                m.Property(x => x.Amount).HasColumnName("amount").HasPrecision(18, 4);
+                m.Property(x => x.Currency).HasColumnName("currency").HasMaxLength(3);
+            });
+
+            b.OwnsMany(w => w.History, h =>
+            {
+                h.ToTable("withdrawal_transitions");
+                h.WithOwner().HasForeignKey("withdrawal_id");
+                h.Property<int>("id").ValueGeneratedOnAdd();
+                h.HasKey("id");
+                h.Property(t => t.From).HasColumnName("from_status").HasConversion<string>().HasMaxLength(32);
+                h.Property(t => t.To).HasColumnName("to_status").HasConversion<string>().HasMaxLength(32);
+                h.Property(t => t.At).HasColumnName("at");
+            });
+            b.Navigation(w => w.History).HasField("_history").UsePropertyAccessMode(PropertyAccessMode.Field);
             b.Property<uint>("xmin").IsRowVersion();
         });
 

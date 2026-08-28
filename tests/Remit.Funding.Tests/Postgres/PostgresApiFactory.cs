@@ -9,7 +9,7 @@ namespace Remit.Funding.Tests.Postgres;
 /// Real PostgreSQL and RabbitMQ in containers, one pair per test class. Migrations run on
 /// startup (Database:MigrateOnStartup), so the schema under test is the checked-in one.
 /// </summary>
-public sealed class PostgresApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
+public sealed class PostgresApiFactory : WebApplicationFactory<FundingApp>, IAsyncLifetime
 {
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
         .WithDatabase("remit")

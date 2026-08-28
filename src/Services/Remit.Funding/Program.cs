@@ -2,22 +2,27 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Remit.BuildingBlocks;
 using Remit.BuildingBlocks.Idempotency;
+using Remit.BuildingBlocks.Messaging;
 using Remit.BuildingBlocks.Outbox;
+using Remit.BuildingBlocks.Telemetry;
 using Remit.Funding.Deposits;
 using Remit.Funding.Messaging;
 using Remit.Funding.Persistence;
 using Remit.Funding.Psp;
+using Remit.Funding.Withdrawals;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddRemitTelemetry(builder.Configuration, "funding");
 
 var connectionString = builder.Configuration.GetConnectionString("Funding");
 if (!string.IsNullOrWhiteSpace(connectionString))
 {
-    // PostgreSQL: deposit + outbox in one transaction, keys in a table, relay to RabbitMQ (ADR-0005).
+    // PostgreSQL: aggregate + outbox in one transaction, keys in a table, relay to RabbitMQ (ADR-0005).
     builder.Services.AddDbContext<FundingDbContext>(o => o.UseNpgsql(connectionString));
     builder.Services.AddScoped<IDepositRepository, EfDepositRepository>();
+    builder.Services.AddScoped<IWithdrawalRepository, EfWithdrawalRepository>();
     builder.Services.AddScoped<IOutbox, EfOutbox>();
     builder.Services.AddScoped<IUnitOfWork, EfUnitOfWork>();
     builder.Services.AddScoped<IIdempotencyStore, PostgresIdempotencyStore>();
@@ -42,6 +47,7 @@ else
     builder.Services.AddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>();
     builder.Services.AddSingleton<IOutbox, InMemoryOutbox>();
     builder.Services.AddSingleton<IDepositRepository, InMemoryDepositRepository>();
+    builder.Services.AddSingleton<IWithdrawalRepository, InMemoryWithdrawalRepository>();
     builder.Services.AddSingleton<IUnitOfWork, NoOpUnitOfWork>();
 }
 
@@ -63,6 +69,18 @@ builder.Services.AddSingleton<IProviderHealth>(new InMemoryProviderHealth());
 builder.Services.AddSingleton<PspRouter>();
 builder.Services.AddSingleton<WebhookVerifiers>();
 
+// Balance check for withdrawals (ADR-0007): the ledger over HTTP when configured, else an in-memory stub.
+var ledgerBaseUrl = builder.Configuration["Ledger:BaseUrl"];
+if (!string.IsNullOrWhiteSpace(ledgerBaseUrl))
+{
+    builder.Services.AddHttpClient<ILedgerBalances, HttpLedgerBalances>(c => c.BaseAddress = new Uri(ledgerBaseUrl));
+}
+else
+{
+    builder.Services.AddSingleton<InMemoryLedgerBalances>();
+    builder.Services.AddSingleton<ILedgerBalances>(sp => sp.GetRequiredService<InMemoryLedgerBalances>());
+}
+
 var app = builder.Build();
 
 if (!string.IsNullOrWhiteSpace(connectionString) && app.Configuration.GetValue("Database:MigrateOnStartup", app.Environment.IsDevelopment()))
@@ -73,11 +91,12 @@ if (!string.IsNullOrWhiteSpace(connectionString) && app.Configuration.GetValue("
 }
 
 app.UseIdempotency();
-app.MapGet("/", () => Results.Text("Remit Funding — see /deposits"));
+app.MapGet("/", () => Results.Text("Remit Funding — see /deposits and /withdrawals"));
 app.MapDeposits();
+app.MapWithdrawals();
 app.MapPspWebhooks();
 
 await app.RunAsync();
 
-// Lets the integration tests host the app through WebApplicationFactory.
-public partial class Program;
+// Marker type for WebApplicationFactory<FundingApp>; the generated Program stays internal.
+public sealed class FundingApp;

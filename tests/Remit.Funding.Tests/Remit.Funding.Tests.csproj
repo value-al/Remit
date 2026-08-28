@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Services\Remit.Funding\Remit.Funding.csproj" />
+    <ProjectReference Include="..\..\src\Services\Remit.Ledger\Remit.Ledger.csproj" />
   </ItemGroup>
 
 </Project>

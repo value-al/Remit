@@ -64,4 +64,8 @@ flowchart TB
 tokens and references only. The scope boundary is therefore the PSP's hosted page or
 SDK, outside Remit. That is a design decision, not an accident — see ADR-0001.
 
+**Trace path (ADR-0007).** One trace per money movement: `POST /deposits` → relay span →
+`publish` (producer) → `process` (consumer, child via `traceparent` header) → ledger postings.
+Every container above reports to the OpenTelemetry collector.
+
 Level 3 (components) is drawn per service as each one lands.

@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Remit.BuildingBlocks.Messaging;
 using Remit.Funding.Persistence;
 
 namespace Remit.Funding.Messaging;
@@ -25,6 +27,8 @@ public sealed class OutboxRelay(
     TimeProvider clock,
     ILogger<OutboxRelay> logger) : BackgroundService
 {
+    private static readonly ActivitySource Activity = new("Remit.Outbox");
+
     private readonly OutboxRelayOptions _options = options.Value;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -71,6 +75,11 @@ public sealed class OutboxRelay(
 
         foreach (var record in batch)
         {
+            // The relay runs outside any request, so each publish starts its own trace here;
+            // the consumer's span becomes its child through the message headers.
+            using var span = Activity.StartActivity($"relay {record.Type}", ActivityKind.Internal);
+            span?.SetTag("messaging.message.id", record.Id.ToString());
+            span?.SetTag("remit.correlation_id", record.CorrelationId);
             try
             {
                 await publisher.PublishAsync(record.ToMessage(), cancellationToken);

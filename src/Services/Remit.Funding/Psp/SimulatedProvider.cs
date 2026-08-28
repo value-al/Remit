@@ -20,16 +20,25 @@ public sealed class ProviderOptions
 
 /// <summary>
 /// A provider that never talks to a network. Its behaviour is fixed by configuration (or by the
-/// delegate in tests), which is exactly what the router's tests need: deterministic outages.
+/// delegates in tests), which is exactly what the router's tests need: deterministic outages.
 /// </summary>
-public sealed class SimulatedProvider(string name, IEnumerable<string> currencies, Func<PspChargeRequest, PspChargeResult> behaviour) : IPaymentProvider
+public sealed class SimulatedProvider(
+    string name,
+    IEnumerable<string> currencies,
+    Func<PspChargeRequest, PspChargeResult> charge,
+    Func<PspPayoutRequest, PspChargeResult>? payout = null) : IPaymentProvider
 {
     public string Name { get; } = name;
 
     public IReadOnlySet<string> Currencies { get; } = currencies.Select(c => c.ToUpperInvariant()).ToHashSet(StringComparer.Ordinal);
 
     public Task<PspChargeResult> ChargeAsync(PspChargeRequest request, CancellationToken cancellationToken) =>
-        Task.FromResult(behaviour(request));
+        Task.FromResult(charge(request));
+
+    public Task<PspChargeResult> PayoutAsync(PspPayoutRequest request, CancellationToken cancellationToken) =>
+        Task.FromResult(payout is not null
+            ? payout(request)
+            : charge(new PspChargeRequest(request.WithdrawalId, request.AccountId, request.Amount, request.IdempotencyKey)));
 
     public static SimulatedProvider FromOptions(string name, ProviderOptions options) =>
         new(name, options.Currencies, options.Behaviour.ToLowerInvariant() switch

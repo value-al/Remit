@@ -2,12 +2,16 @@ using Remit.BuildingBlocks;
 
 namespace Remit.Funding.Psp;
 
-/// <summary>What Funding asks a provider to do. The provider never sees card data — only references.</summary>
+/// <summary>What Funding asks a provider to collect. The provider never sees card data — only references.</summary>
 public sealed record PspChargeRequest(Guid DepositId, Guid AccountId, Money Amount, string IdempotencyKey);
+
+/// <summary>What Funding asks a provider to pay out. <paramref name="Destination"/> is the provider's token for the client's bank or card.</summary>
+public sealed record PspPayoutRequest(Guid WithdrawalId, Guid AccountId, Money Amount, string Destination, string IdempotencyKey);
 
 /// <summary>
 /// The three outcomes a provider call can have, kept distinct because they route differently:
 /// a rejection is final for this provider, an outage is a reason to try the next one.
+/// Shared by charges and payouts.
 /// </summary>
 public abstract record PspChargeResult
 {
@@ -15,10 +19,10 @@ public abstract record PspChargeResult
     {
     }
 
-    /// <summary>The provider accepted the charge and will confirm asynchronously.</summary>
+    /// <summary>The provider accepted the instruction and will confirm asynchronously.</summary>
     public sealed record Accepted(string Reference) : PspChargeResult;
 
-    /// <summary>The provider declined this charge. Do not retry elsewhere without a human decision.</summary>
+    /// <summary>The provider declined. Do not retry elsewhere without a human decision.</summary>
     public sealed record Rejected(string Reason) : PspChargeResult;
 
     /// <summary>The provider could not be reached or errored. Safe to try the next provider.</summary>
@@ -33,4 +37,6 @@ public interface IPaymentProvider
     IReadOnlySet<string> Currencies { get; }
 
     Task<PspChargeResult> ChargeAsync(PspChargeRequest request, CancellationToken cancellationToken);
+
+    Task<PspChargeResult> PayoutAsync(PspPayoutRequest request, CancellationToken cancellationToken);
 }

@@ -8,6 +8,7 @@ public sealed record RoutingOutcome(string? Provider, PspChargeResult Result, IR
 /// demoted to the end of the chain rather than excluded — a degraded provider is still better
 /// than no provider. An <see cref="PspChargeResult.Unavailable"/> falls through to the next;
 /// an <see cref="PspChargeResult.Accepted"/> or <see cref="PspChargeResult.Rejected"/> ends it.
+/// The same chain and the same rules serve charges and payouts.
 /// </summary>
 public sealed class PspRouter(IEnumerable<IPaymentProvider> providers, IProviderHealth health, ILogger<PspRouter> logger)
 {
@@ -25,14 +26,20 @@ public sealed class PspRouter(IEnumerable<IPaymentProvider> providers, IProvider
             .Select(x => x.Provider)
             .ToList();
 
-    public async Task<RoutingOutcome> ChargeAsync(PspChargeRequest request, CancellationToken cancellationToken)
+    public Task<RoutingOutcome> ChargeAsync(PspChargeRequest request, CancellationToken cancellationToken) =>
+        RouteAsync(request.Amount.Currency, request.DepositId, p => p.ChargeAsync(request, cancellationToken));
+
+    public Task<RoutingOutcome> PayoutAsync(PspPayoutRequest request, CancellationToken cancellationToken) =>
+        RouteAsync(request.Amount.Currency, request.WithdrawalId, p => p.PayoutAsync(request, cancellationToken));
+
+    private async Task<RoutingOutcome> RouteAsync(string currency, Guid transactionId, Func<IPaymentProvider, Task<PspChargeResult>> call)
     {
         var attempted = new List<string>();
-        var chain = Chain(request.Amount.Currency);
+        var chain = Chain(currency);
 
         if (chain.Count == 0)
         {
-            return new RoutingOutcome(null, new PspChargeResult.Rejected($"No provider supports {request.Amount.Currency}."), attempted);
+            return new RoutingOutcome(null, new PspChargeResult.Rejected($"No provider supports {currency}."), attempted);
         }
 
         PspChargeResult last = new PspChargeResult.Unavailable("No provider attempted.");
@@ -41,7 +48,7 @@ public sealed class PspRouter(IEnumerable<IPaymentProvider> providers, IProvider
             attempted.Add(provider.Name);
             try
             {
-                last = await provider.ChargeAsync(request, cancellationToken);
+                last = await call(provider);
             }
             catch (Exception e) when (e is not OperationCanceledException)
             {
@@ -61,7 +68,7 @@ public sealed class PspRouter(IEnumerable<IPaymentProvider> providers, IProvider
 
                 case PspChargeResult.Unavailable unavailable:
                     health.Record(provider.Name, success: false);
-                    logger.LogWarning("Provider {Provider} unavailable for deposit {DepositId}: {Error}. Falling through.", provider.Name, request.DepositId, unavailable.Error);
+                    logger.LogWarning("Provider {Provider} unavailable for {TransactionId}: {Error}. Falling through.", provider.Name, transactionId, unavailable.Error);
                     continue;
             }
         }
