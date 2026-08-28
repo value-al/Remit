@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Remit.BuildingBlocks.Hosting;
 using Remit.BuildingBlocks.Messaging;
 using Remit.BuildingBlocks.Telemetry;
 using Remit.Ledger.Balances;
@@ -14,6 +15,7 @@ builder.Services.AddRemitTelemetry(builder.Configuration, "ledger");
 var connectionString = builder.Configuration.GetConnectionString("Ledger")
     ?? throw new InvalidOperationException("ConnectionStrings:Ledger is required.");
 builder.Services.AddDbContext<LedgerDbContext>(o => o.UseNpgsql(connectionString));
+builder.Services.AddRemitHealth<LedgerDbContext>();
 
 builder.Services.AddSingleton<SettlementHandler>();
 builder.Services.AddSingleton<IMessageHandler>(sp => sp.GetRequiredService<SettlementHandler>());
@@ -26,16 +28,23 @@ if (builder.Configuration.GetSection(RabbitMqOptions.Section).Exists())
 
 var app = builder.Build();
 
+if (ServiceHosting.IsMigrateOnly(args))
+{
+    return await app.MigrateAndExitAsync<LedgerDbContext>();
+}
+
 if (app.Configuration.GetValue("Database:MigrateOnStartup", app.Environment.IsDevelopment()))
 {
     using var scope = app.Services.CreateScope();
     await scope.ServiceProvider.GetRequiredService<LedgerDbContext>().Database.MigrateAsync();
 }
 
+app.MapRemitHealth();
 app.MapGet("/", () => Results.Text("Remit Ledger — see /accounts/{id}/balance?currency=EUR and /entries"));
 app.MapLedger();
 
 await app.RunAsync();
+return 0;
 
 // Marker type for WebApplicationFactory<LedgerApp>; the generated Program stays internal.
 public sealed class LedgerApp;

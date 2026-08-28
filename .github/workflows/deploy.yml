@@ -1,0 +1,61 @@
+# Manual deployment to AKS (ADR-0008). Authenticates to Azure with OIDC — no stored credentials —
+# deploys the Bicep, builds the images in ACR, and upgrades the Helm release.
+#
+# Repository secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (a federated app
+# registration with Contributor + User Access Administrator on the resource group),
+# REMIT_PG_PASSWORD. Variables: AZURE_RESOURCE_GROUP, REMIT_DEPLOYER_OBJECT_ID.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: Environment name (Bicep "name" parameter)
+        default: remit-dev
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: azure
+    env:
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy infrastructure
+        id: infra
+        env:
+          REMIT_PG_PASSWORD: ${{ secrets.REMIT_PG_PASSWORD }}
+          REMIT_DEPLOYER_OBJECT_ID: ${{ vars.REMIT_DEPLOYER_OBJECT_ID }}
+        run: |
+          az deployment group create -g "$RG" -n remit -f infra/bicep/main.bicep -p infra/bicep/main.bicepparam \
+            -p name="${{ inputs.name }}" -o json > out.json
+          for k in clusterName acrLoginServer keyVaultName workloadIdentityClientId tenantId; do
+            echo "$k=$(jq -r ".properties.outputs.$k.value" out.json)" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Build images in the registry
+        run: |
+          ACR=$(echo "${{ steps.infra.outputs.acrLoginServer }}" | cut -d. -f1)
+          az acr build -r "$ACR" -t remit/funding:${{ github.sha }} -f src/Services/Remit.Funding/Dockerfile .
+          az acr build -r "$ACR" -t remit/ledger:${{ github.sha }}  -f src/Services/Remit.Ledger/Dockerfile .
+
+      - name: Helm upgrade
+        run: |
+          az aks get-credentials -g "$RG" -n "${{ steps.infra.outputs.clusterName }}" --overwrite-existing
+          helm upgrade --install remit deploy/helm/remit -n remit --create-namespace --wait --timeout 10m \
+            --set image.registry="${{ steps.infra.outputs.acrLoginServer }}" \
+            --set image.tag="${{ github.sha }}" \
+            --set identity.clientId="${{ steps.infra.outputs.workloadIdentityClientId }}" \
+            --set identity.tenantId="${{ steps.infra.outputs.tenantId }}" \
+            --set keyVault.name="${{ steps.infra.outputs.keyVaultName }}"

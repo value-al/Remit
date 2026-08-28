@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Remit.BuildingBlocks;
+using Remit.BuildingBlocks.Hosting;
 using Remit.BuildingBlocks.Idempotency;
 using Remit.BuildingBlocks.Messaging;
 using Remit.BuildingBlocks.Outbox;
@@ -26,6 +27,7 @@ if (!string.IsNullOrWhiteSpace(connectionString))
     builder.Services.AddScoped<IOutbox, EfOutbox>();
     builder.Services.AddScoped<IUnitOfWork, EfUnitOfWork>();
     builder.Services.AddScoped<IIdempotencyStore, PostgresIdempotencyStore>();
+    builder.Services.AddRemitHealth<FundingDbContext>();
 
     builder.Services.Configure<OutboxRelayOptions>(builder.Configuration.GetSection(OutboxRelayOptions.Section));
     builder.Services.Configure<RabbitMqOptions>(builder.Configuration.GetSection(RabbitMqOptions.Section));
@@ -49,6 +51,7 @@ else
     builder.Services.AddSingleton<IDepositRepository, InMemoryDepositRepository>();
     builder.Services.AddSingleton<IWithdrawalRepository, InMemoryWithdrawalRepository>();
     builder.Services.AddSingleton<IUnitOfWork, NoOpUnitOfWork>();
+    builder.Services.AddRemitHealth();
 }
 
 // Payment providers (ADR-0006). Configured under "Psp:Providers"; two simulators by default.
@@ -83,6 +86,18 @@ else
 
 var app = builder.Build();
 
+if (ServiceHosting.IsMigrateOnly(args))
+{
+    // The Helm pre-upgrade Job runs the image this way (ADR-0008): migrate, report, exit.
+    if (string.IsNullOrWhiteSpace(connectionString))
+    {
+        app.Logger.LogError("--migrate needs ConnectionStrings:Funding; nothing to migrate in the in-memory configuration.");
+        return 1;
+    }
+
+    return await app.MigrateAndExitAsync<FundingDbContext>();
+}
+
 if (!string.IsNullOrWhiteSpace(connectionString) && app.Configuration.GetValue("Database:MigrateOnStartup", app.Environment.IsDevelopment()))
 {
     // Convenient locally and in tests. In a real deployment migrations run as a release step, not on boot.
@@ -91,12 +106,14 @@ if (!string.IsNullOrWhiteSpace(connectionString) && app.Configuration.GetValue("
 }
 
 app.UseIdempotency();
+app.MapRemitHealth();
 app.MapGet("/", () => Results.Text("Remit Funding — see /deposits and /withdrawals"));
 app.MapDeposits();
 app.MapWithdrawals();
 app.MapPspWebhooks();
 
 await app.RunAsync();
+return 0;
 
 // Marker type for WebApplicationFactory<FundingApp>; the generated Program stays internal.
 public sealed class FundingApp;

@@ -1,0 +1,50 @@
+# Schema changes run before the new version is rolled out, as Helm hooks, using the same image
+# in --migrate mode (ADR-0008). If a migration fails the release fails and the old pods keep running.
+{{- range $svc := list "funding" "ledger" }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate-{{ $svc }}
+  labels:
+    {{- include "remit.labels" $ | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: {{ $.Values.serviceAccount.name }}
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          image: {{ $.Values.image.registry }}/remit/{{ $svc }}:{{ $.Values.image.tag }}
+          args: ["--migrate"]
+          env:
+            {{- include "remit.commonEnv" $ | nindent 12 }}
+          envFrom:
+            - secretRef:
+                name: remit-secrets
+          volumeMounts:
+            - name: secrets
+              mountPath: /mnt/secrets
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        - name: secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: remit-keyvault
+{{- end }}

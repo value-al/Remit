@@ -23,6 +23,7 @@ like this has to make is **made, written down, and shown running**.
 | PostgreSQL per service, EF Core migrations, polling relay with SKIP LOCKED, xmin concurrency | [ADR-0005](docs/adr/0005-persistence-and-relay.md) |
 | One PSP boundary with three outcomes; route by currency then health; submit sync, settle by signed webhook | [ADR-0006](docs/adr/0006-psp-boundary-and-webhooks.md) |
 | Ledger consumes with an inbox (exactly-once posting); withdrawals mirror deposits; one trace per money movement | [ADR-0007](docs/adr/0007-ledger-consumer-withdrawals-telemetry.md) |
+| AKS by Bicep; workload identity + Key Vault CSI instead of credentials; migrations as pre-upgrade Jobs; locked-down pods | [ADR-0008](docs/adr/0008-aks-workload-identity-key-vault.md) |
 | Context and container diagrams, PCI scope boundary | [C4](docs/architecture/c4-context.md) |
 
 ## What runs today
@@ -55,6 +56,13 @@ like this has to make is **made, written down, and shown running**.
 - **OpenTelemetry** in both services: ASP.NET Core, HttpClient, Npgsql and every `Remit.*` span;
   W3C trace context carried in RabbitMQ headers, so one trace runs request → relay → publish →
   consume → postings. OTLP export to the compose file's Jaeger when `Otel:Endpoint` is set.
+- **Deployment** — `infra/bicep/main.bicep` (Log Analytics, ACR, Key Vault in RBAC mode, PostgreSQL
+  Flexible Server, AKS with OIDC issuer + workload identity + Key Vault CSI add-on, one
+  user-assigned identity federated to the `remit-workload` service account); `deploy/helm/remit`
+  (two Deployments, migrate Jobs as pre-upgrade hooks running the image with `--migrate`,
+  SecretProviderClass, in-cluster RabbitMQ and Jaeger); Dockerfiles (alpine, non-root, healthcheck);
+  `/health/live` and `/health/ready`; `deploy.yml` with OIDC login. No credential anywhere in the
+  repository. See [deploy/README.md](deploy/README.md).
 - Tests: the idempotency contract through the HTTP pipeline in memory; and with Testcontainers,
   real PostgreSQL + RabbitMQ — deposit and outbox row written together, message delivered and
   row marked sent, replay across a database round trip, eight concurrent claims on one key
@@ -70,6 +78,8 @@ PostgreSQL; with a `RabbitMq` section as well, the relay publishes.
 
 ```sh
 dotnet test                 # needs Docker for the PostgreSQL/RabbitMQ tests
+bicep build infra/bicep/main.bicep && helm lint deploy/helm/remit   # infrastructure validates without a subscription
+docker build -f src/Services/Remit.Funding/Dockerfile -t remit/funding .
 docker compose up -d        # PostgreSQL, RabbitMQ, Redis, Jaeger
 dotnet run --project src/Services/Remit.Funding   # :5000 — migrates, relays to RabbitMQ
 dotnet run --project src/Services/Remit.Ledger    # :5100 — migrates, consumes, serves balances
@@ -105,7 +115,7 @@ curl "localhost:5100/accounts/11111111-1111-1111-1111-111111111111/balance?curre
 | 4 | ~~PostgreSQL persistence, outbox table and relay to RabbitMQ~~ — done |
 | 5 | ~~PSP adapter boundary, two simulated providers, routing by currency and success rate; webhooks verified with Countersign~~ — done |
 | 6 | ~~Ledger consumer posts settlements; withdrawals; OpenTelemetry end to end~~ — done |
-| 7 | AKS deployment with infrastructure as code; Key Vault; managed identity |
+| 7 | ~~AKS deployment with infrastructure as code; Key Vault; managed identity~~ — done |
 | 8 | Reconciliation against a statement file; exceptions endpoint |
 | 9 | SLO document; STRIDE threat model of the deposit flow |
 
@@ -118,6 +128,8 @@ src/Services/Remit.Ledger                 journal, consumer, balances (HTTP)
 tests/                                    one test project per service
 docs/adr/                                 architecture decision records
 docs/architecture/                        C4 diagrams
+infra/bicep/                              Azure resources, one file
+deploy/helm/remit/                        the chart; deploy/README.md walks the release
 ```
 
 ## Author

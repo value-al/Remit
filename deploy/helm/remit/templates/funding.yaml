@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: funding
+  labels:
+    {{- include "remit.labels" . | nindent 4 }}
+    app.kubernetes.io/name: funding
+spec:
+  replicas: {{ .Values.funding.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: funding
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: funding
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: funding
+          image: {{ .Values.image.registry }}/remit/funding:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            {{- include "remit.commonEnv" . | nindent 12 }}
+            - name: Ledger__BaseUrl
+              value: http://ledger
+            - name: Psp__Providers__alpha__Currencies__0
+              value: EUR
+            - name: Psp__Providers__alpha__Currencies__1
+              value: USD
+            - name: Psp__Providers__alpha__Currencies__2
+              value: GBP
+            - name: Psp__Providers__beta__Currencies__0
+              value: EUR
+            - name: Psp__Providers__beta__Currencies__1
+              value: GBP
+          envFrom:
+            - secretRef:
+                name: remit-secrets
+          volumeMounts:
+            - name: secrets
+              mountPath: /mnt/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.funding.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: remit-keyvault
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: funding
+  labels:
+    {{- include "remit.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: funding
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

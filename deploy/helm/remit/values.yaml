@@ -1,0 +1,38 @@
+# Values come from the Bicep outputs; see deploy/README.md and .github/workflows/deploy.yml.
+image:
+  registry: remitdevacr.azurecr.io   # acrLoginServer
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Workload identity: the service account below is federated to this identity in Bicep.
+identity:
+  clientId: "00000000-0000-0000-0000-000000000000"   # workloadIdentityClientId
+  tenantId: "00000000-0000-0000-0000-000000000000"   # tenantId
+serviceAccount:
+  name: remit-workload
+
+keyVault:
+  name: remit-dev-kv                                  # keyVaultName
+
+funding:
+  replicas: 2
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { cpu: "1", memory: 512Mi }
+ledger:
+  replicas: 2
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+# In-cluster broker for the reference deployment. Managed alternatives are discussed in ADR-0008.
+rabbitmq:
+  image: rabbitmq:4-management-alpine
+  storage: 8Gi
+  username: remit
+  password: remit   # dev only — for anything real, put this in Key Vault like the others
+
+# Tracing backend for the reference deployment: Jaeger all-in-one, in-memory.
+jaeger:
+  enabled: true
+  image: jaegertracing/jaeger:2.5.0
