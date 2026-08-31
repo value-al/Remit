@@ -96,6 +96,8 @@ docker compose up -d        # PostgreSQL, RabbitMQ, Redis, Jaeger
 dotnet run --project src/Services/Remit.Funding   # :5000 — migrates, relays to RabbitMQ
 dotnet run --project src/Services/Remit.Ledger    # :5100 — migrates, consumes, serves balances
 dotnet run --project src/Services/Remit.Reconciliation   # :5200 — consumes, takes statements, lists exceptions
+# Then open http://localhost:5000/console — a browser tool that drives the whole flow: deposits,
+# replays, webhooks signed in the tab, balances, withdrawals, statements, exceptions.
 # Traces: http://localhost:16686 (Jaeger) — search service "funding" or "ledger"
 ```
 

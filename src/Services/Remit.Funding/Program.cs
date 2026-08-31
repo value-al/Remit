@@ -17,6 +17,14 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddRemitTelemetry(builder.Configuration, "funding");
 
+
+// The browser console (Funding's /console, or the copy on value.al) calls all three services
+// cross-origin. Any origin is allowed in Development only; production has no console.
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("Idempotent-Replayed")));
+}
+
 var connectionString = builder.Configuration.GetConnectionString("Funding");
 if (!string.IsNullOrWhiteSpace(connectionString))
 {
@@ -103,6 +111,18 @@ if (!string.IsNullOrWhiteSpace(connectionString) && app.Configuration.GetValue("
     // Convenient locally and in tests. In a real deployment migrations run as a release step, not on boot.
     using var scope = app.Services.CreateScope();
     await scope.ServiceProvider.GetRequiredService<FundingDbContext>().Database.MigrateAsync();
+}
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseCors();
+}
+
+// The console: a single static page under wwwroot/console. Development only, like the CORS above.
+if (app.Environment.IsDevelopment())
+{
+    app.UseDefaultFiles(); // /console and /console/ both resolve to console/index.html
+    app.UseStaticFiles();
 }
 
 app.UseIdempotency();
