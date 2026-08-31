@@ -32,6 +32,11 @@
   details.how summary { cursor:pointer; color:var(--accent); font-size:12px; letter-spacing:.08em; text-transform:uppercase }
   details.how svg { margin-top:10px }
   details.how .cap { color:var(--muted); font-size:12px; margin:6px 0 0 }
+  .hint { color:var(--muted); font-size:12px; margin:2px 0 10px }
+  .hint b { color:var(--ink); font-weight:600 }
+  fieldset details.how { margin:0 0 10px; background:transparent }
+  ul.recipes { margin:8px 0 0; padding-left:16px; color:var(--muted); font-size:12px }
+  ul.recipes li { margin:0 0 3px } ul.recipes b { color:var(--ink); font-weight:600 }
   @media (max-width:820px) { main { grid-template-columns:1fr } .side { border-right:0; border-bottom:1px solid var(--line) } }
 </style>
 </head>
@@ -98,6 +103,22 @@
 
     <fieldset>
       <legend>5 · Reconciliation</legend>
+      <p class="hint">The one check that does not trust the provider. This service has its own record,
+      built from the events above — it never reads Funding's tables. Give it the provider's statement
+      and it matches <b>on the reference alone</b>; every difference becomes an exception it will not
+      fix. A person resolves those, with a reason.</p>
+      <details class="how"><summary>Raise each exception on purpose</summary>
+        <ul class="recipes">
+          <li><b>matched</b> — deposit → settled webhook → Build → POST</li>
+          <li><b>AmountMismatch</b> — same, but change one amount in the CSV first</li>
+          <li><b>UnknownAtPsp</b> — add a row whose reference was never issued</li>
+          <li><b>MissingAtPsp</b> — settle a deposit, then delete its row before posting</li>
+          <li><b>SettledButNotFinal</b> — skip the webhook, but leave the reference in the CSV: the provider settled it, we never heard</li>
+          <li><b>Stuck</b> — deposit, no webhook, wait for the window, then run the sweep</li>
+        </ul>
+        <p class="cap">Post the same statement twice and nothing new is raised — one open exception per
+        kind, provider and reference, because month-end files get re-sent.</p>
+      </details>
       <label>Provider · period (a statement is always one provider, one period)</label>
       <div class="row" style="margin-top:2px">
         <input id="sprov" style="flex:1 1 90px" placeholder="alpha">
