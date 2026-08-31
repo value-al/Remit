@@ -12,6 +12,13 @@ like this has to make is **made, written down, and shown running**.
 
 > The domain is generic. Nothing here describes any particular company's system.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture/remit-overview-dark.svg">
+  <img alt="One deposit through Remit: idempotency key in, provider routed and webhook verified, deposit and outbox row in one transaction, relay to RabbitMQ, inbox to a balanced ledger, month-end statement matched by reconciliation. Internet and cluster are separate trust boundaries; card data never enters." src="docs/architecture/remit-overview-light.svg">
+</picture>
+
+*One deposit, end to end. Orange is the money-carrying event; dashed lines cross a trust boundary.*
+
 ## What is decided
 
 | Decision | Where |
