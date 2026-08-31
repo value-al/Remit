@@ -98,9 +98,15 @@
 
     <fieldset>
       <legend>5 · Reconciliation</legend>
+      <label>Provider · period (a statement is always one provider, one period)</label>
+      <div class="row" style="margin-top:2px">
+        <input id="sprov" style="flex:1 1 90px" placeholder="alpha">
+        <input id="sfrom" style="flex:1 1 130px" placeholder="from">
+        <input id="sto" style="flex:1 1 130px" placeholder="to">
+      </div>
       <label>Statement (CSV) — built from this session's settled movements; edit to break it</label>
       <textarea id="csv">reference,kind,amount,currency,settled_at</textarea>
-      <div class="row"><button onclick="buildStatement()">Build from session</button><button class="primary" onclick="postStatement()">POST statement (alpha)</button><button onclick="exceptions()">GET open exceptions</button><button onclick="sweep()">Run stuck sweep</button></div>
+      <div class="row"><button onclick="buildStatement()">Build from session</button><button class="primary" onclick="postStatement()">POST statement</button><button onclick="exceptions()">Exceptions — mine</button><button onclick="exceptions(true)">all</button><button onclick="sweep()">Run stuck sweep</button></div>
       <label>Resolve exception id · reason</label><input id="exid" placeholder="exception id"><input id="exreason" placeholder="why" style="margin-top:4px">
       <div class="row"><button onclick="resolve()">POST resolve</button></div>
     </fieldset>
@@ -203,7 +209,7 @@
 </main>
 <script>
 const $ = id => document.getElementById(id);
-const S = { last: null, lastKind: null, settled: [] };
+const S = { last: null, lastKind: null, settled: [], startedAt: new Date(Date.now() - 60000) };
 const cfgKeys = ['funding','ledger','recon','secret_alpha','secret_beta'];
 const PRESETS = {
   local:   { funding: 'http://localhost:5000', ledger: 'http://localhost:5100', recon: 'http://localhost:5200', secret_alpha: 'whsec_alpha_dev', secret_beta: 'whsec_beta_dev' },
@@ -285,7 +291,7 @@ async function webhook(status, forged) {
   const payload = { eventId: $('evt').value, depositId: S.last.id, reference: S.last.pspReference, status };
   if (status === 'failed') payload.reason = 'issuer declined';
   const r = await signedWebhook(S.last.provider, payload, forged);
-  if (r.ok && r.json && r.json.applied && status === 'settled') S.settled.push({ ref: S.last.pspReference, kind: 'deposit', amount: S.last.amount, currency: S.last.currency, at: new Date().toISOString() });
+  if (r.ok && r.json && r.json.applied && status === 'settled') S.settled.push({ ref: S.last.pspReference, provider: S.last.provider, kind: 'deposit', amount: S.last.amount, currency: S.last.currency, at: new Date().toISOString() });
 }
 
 async function balance() { await call('ledger', 'GET', `/accounts/${$('account').value}/balance?currency=${$('currency').value}`); }
@@ -301,25 +307,50 @@ async function withdrawalWebhook(status) {
   const payload = { eventId: $('evt').value, withdrawalId: S.last.id, reference: S.last.pspReference, status };
   if (status === 'failed') payload.reason = 'payout rejected';
   const r = await signedWebhook(S.last.provider, payload, false);
-  if (r.ok && r.json && r.json.applied && status === 'paid') S.settled.push({ ref: S.last.pspReference, kind: 'withdrawal', amount: S.last.amount, currency: S.last.currency, at: new Date().toISOString() });
+  if (r.ok && r.json && r.json.applied && status === 'paid') S.settled.push({ ref: S.last.pspReference, provider: S.last.provider, kind: 'withdrawal', amount: S.last.amount, currency: S.last.currency, at: new Date().toISOString() });
 }
 
 function buildStatement() {
-  const rows = S.settled.map(s => `${s.ref},${s.kind},${s.amount},${s.currency},${s.at}`);
+  // A statement is one provider's, for one period. The sandbox is shared and only wiped nightly,
+  // so the period is this session — otherwise every movement someone else settled today comes
+  // back as MissingAtPsp and drowns the point.
+  const provider = $('sprov').value || S.settled.at(-1)?.provider || S.last?.provider || 'alpha';
+  const mine = S.settled.filter(s => s.provider === provider);
+  const rows = mine.map(s => `${s.ref},${s.kind},${s.amount},${s.currency},${s.at}`);
   $('csv').value = ['reference,kind,amount,currency,settled_at', ...rows].join('\n');
-  log('ok', `statement built from ${rows.length} settled movement(s) in this session`);
+  $('sprov').value = provider;
+  $('sfrom').value = S.startedAt.toISOString();
+  $('sto').value = new Date(Date.now() + 60000).toISOString();
+  const others = S.settled.length - mine.length;
+  log('ok', `statement built: ${rows.length} movement(s) settled through ${provider} in this session`,
+    others > 0 ? `${others} settled through another provider — build and post those separately.` : undefined);
 }
 async function postStatement() {
-  const now = new Date(); const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-  const to = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString().slice(0, 10);
-  await call('recon', 'POST', `/statements/alpha?from=${from}&to=${to}`, { raw: $('csv').value, headers: { 'Content-Type': 'text/csv' } });
+  const provider = $('sprov').value || 'alpha';
+  const from = $('sfrom').value || S.startedAt.toISOString();
+  const to = $('sto').value || new Date(Date.now() + 60000).toISOString();
+  const r = await call('recon', 'POST', `/statements/${provider}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { raw: $('csv').value, headers: { 'Content-Type': 'text/csv' } });
+  if (r.ok && r.json) {
+    const raised = (r.json.raised || []).map(x => `${x.kind} ${x.reference || ''}`).join(', ');
+    log(r.json.exceptions === r.json.raised.length ? 'ok' : 'ok', `matched ${r.json.matched} of ${r.json.lines} line(s); raised ${r.json.raised.length} new exception(s)`,
+      raised || 'nothing new — re-posting the same statement never duplicates an exception.',
+      r.json.exceptions > r.json.raised.length ? `${r.json.exceptions - r.json.raised.length} of the ${r.json.exceptions} difference(s) were already open from an earlier statement.` : undefined);
+  }
 }
-async function exceptions() { await call('recon', 'GET', '/exceptions?open=true'); }
+async function exceptions(all) {
+  const r = await call('recon', 'GET', '/exceptions?open=true');
+  if (!r.ok || !Array.isArray(r.json)) return;
+  const refs = new Set(S.settled.map(s => s.ref).concat(S.last?.pspReference ? [S.last.pspReference] : []));
+  const mine = r.json.filter(e => refs.has(e.reference) || e.movementId === S.last?.id);
+  log('ok', all ? `${r.json.length} open exception(s) on this instance` : `${mine.length} of ${r.json.length} open exception(s) belong to this session`,
+    (all ? r.json : mine).map(e => `${e.kind}  ${e.reference || e.movementId}  ${e.detail}`).join('\n') || 'none',
+    all ? undefined : 'The sandbox is shared and wiped nightly; the rest are other people\'s movements.');
+}
 async function sweep() { await call('recon', 'POST', '/sweeps/stuck', { raw: '' }); }
 async function resolve() { await call('recon', 'POST', `/exceptions/${$('exid').value}/resolve`, { body: { resolution: $('exreason').value } }); }
 
 log('ok', 'Remit console ready', $('preset').value === 'sandbox'
-  ? 'Pointed at the public sandbox: no setup needed, press Probe. The sandbox is shared, rate-limited and wiped nightly; its webhook secrets are public on purpose.'
+  ? 'Pointed at the public sandbox: no setup needed, press Probe. The sandbox is shared, rate-limited and wiped nightly; its webhook secrets are public on purpose. Reconciliation therefore scopes statements to your session — otherwise other visitors\' movements come back as MissingAtPsp.'
   : 'Start with docker compose up -d and the three services, then Probe. Every request and response is logged here; secrets never leave this tab.');
 </script>
 </body>
