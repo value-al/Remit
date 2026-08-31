@@ -26,6 +26,8 @@ like this has to make is **made, written down, and shown running**.
 | AKS by Bicep; workload identity + Key Vault CSI instead of credentials; migrations as pre-upgrade Jobs; locked-down pods | [ADR-0008](docs/adr/0008-aks-workload-identity-key-vault.md) |
 | Reconciliation keeps its own record, matches statements on the reference only, raises five kinds of exception and never fixes anything | [ADR-0009](docs/adr/0009-reconciliation.md) |
 | Context and container diagrams, PCI scope boundary | [C4](docs/architecture/c4-context.md) |
+| Five SLOs measured from telemetry that already exists, alerts, error-budget policy | [SLOs](docs/operations/slo.md) |
+| STRIDE threat model of the deposit flow — controls in place, residuals, the five fixes to do first | [Threat model](docs/security/threat-model-deposit-flow.md) |
 
 ## What runs today
 
@@ -133,7 +135,13 @@ printf 'reference,kind,amount,currency,settled_at\n%s,deposit,100,EUR,%s\n' "<re
 | 6 | ~~Ledger consumer posts settlements; withdrawals; OpenTelemetry end to end~~ — done |
 | 7 | ~~AKS deployment with infrastructure as code; Key Vault; managed identity~~ — done |
 | 8 | ~~Reconciliation against a statement file; exceptions endpoint~~ — done |
-| 9 | SLO document; STRIDE threat model of the deposit flow |
+| 9 | ~~SLO document; STRIDE threat model of the deposit flow~~ — done |
+
+The roadmap is complete. What the threat model and ADRs leave on the table, in the order they
+should be picked up: per-service database roles with an append-only ledger, NetworkPolicy,
+operator identity on reconciliation, retention for traces and idempotency keys, one identity per
+service, a reservation entry for withdrawals (ADR-0007), balance-level reconciliation against
+`psp:receivable` (ADR-0009).
 
 ## Layout
 
@@ -145,6 +153,8 @@ src/Services/Remit.Reconciliation         movements from events, statements, exc
 tests/                                    one test project per service
 docs/adr/                                 architecture decision records
 docs/architecture/                        C4 diagrams
+docs/operations/                          SLOs, alerting, error-budget policy
+docs/security/                            threat model
 infra/bicep/                              Azure resources, one file
 deploy/helm/remit/                        the chart; deploy/README.md walks the release
 ```
