@@ -18,12 +18,9 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddRemitTelemetry(builder.Configuration, "funding");
 
 
-// The browser console (Funding's /console, or the copy on value.al) calls all three services
-// cross-origin. Any origin is allowed in Development only; production has no console.
-if (builder.Environment.IsDevelopment())
-{
-    builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("Idempotent-Replayed")));
-}
+// CORS for the console, rate limiting for the public sandbox, forwarded headers behind a proxy —
+// each only when configured (any-origin CORS in Development). See EdgeHosting.
+builder.Services.AddRemitEdge(builder.Configuration, builder.Environment);
 
 var connectionString = builder.Configuration.GetConnectionString("Funding");
 if (!string.IsNullOrWhiteSpace(connectionString))
@@ -113,10 +110,7 @@ if (!string.IsNullOrWhiteSpace(connectionString) && app.Configuration.GetValue("
     await scope.ServiceProvider.GetRequiredService<FundingDbContext>().Database.MigrateAsync();
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseCors();
-}
+app.UseRemitEdge();
 
 // The console: a single static page under wwwroot/console. Development only, like the CORS above.
 if (app.Environment.IsDevelopment())

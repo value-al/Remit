@@ -1,0 +1,30 @@
+# One hostname, three services by path prefix. Caddy strips the prefix before proxying.
+# Goes into the host's Caddyfile (the value.al pipeline keeps it there between markers).
+remit-sandbox.value.al {
+    encode gzip zstd
+
+    handle_path /funding/* {
+        reverse_proxy remit-funding:8080
+    }
+    handle_path /ledger/* {
+        reverse_proxy remit-ledger:8080
+    }
+    handle_path /reconciliation/* {
+        reverse_proxy remit-reconciliation:8080
+    }
+    handle {
+        respond "Remit sandbox — use https://value.al/tools/remit-console.html. Paths: /funding, /ledger, /reconciliation." 200
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        X-Robots-Tag "noindex"
+        -Server
+    }
+
+    log {
+        output stdout
+        format console
+    }
+}

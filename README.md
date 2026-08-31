@@ -98,6 +98,8 @@ dotnet run --project src/Services/Remit.Ledger    # :5100 — migrates, consumes
 dotnet run --project src/Services/Remit.Reconciliation   # :5200 — consumes, takes statements, lists exceptions
 # Then open http://localhost:5000/console — a browser tool that drives the whole flow: deposits,
 # replays, webhooks signed in the tab, balances, withdrawals, statements, exceptions.
+# No local setup at all: https://value.al/tools/remit-console.html drives the public sandbox
+# (deploy/sandbox — shared, rate-limited, wiped nightly).
 # Traces: http://localhost:16686 (Jaeger) — search service "funding" or "ledger"
 ```
 

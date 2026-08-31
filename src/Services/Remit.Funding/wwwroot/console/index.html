@@ -40,6 +40,11 @@
   <div class="side">
     <fieldset>
       <legend>Targets</legend>
+      <label>Preset</label>
+      <select id="preset" onchange="applyPreset(this.value)">
+        <option value="local">Local — docker compose + dotnet run</option>
+        <option value="sandbox">Sandbox — remit-sandbox.value.al (public, reset nightly)</option>
+      </select>
       <label>Funding</label><input id="funding" value="http://localhost:5000">
       <label>Ledger</label><input id="ledger" value="http://localhost:5100">
       <label>Reconciliation</label><input id="recon" value="http://localhost:5200">
@@ -102,8 +107,15 @@
 const $ = id => document.getElementById(id);
 const S = { last: null, lastKind: null, settled: [] };
 const cfgKeys = ['funding','ledger','recon','secret_alpha','secret_beta'];
-try { const c = JSON.parse(localStorage.getItem('remit-console') || '{}'); cfgKeys.forEach(k => { if (c[k]) $(k).value = c[k]; }); } catch {}
-function saveCfg() { const c = {}; cfgKeys.forEach(k => c[k] = $(k).value); try { localStorage.setItem('remit-console', JSON.stringify(c)); } catch {} log('ok', 'config saved'); }
+const PRESETS = {
+  local:   { funding: 'http://localhost:5000', ledger: 'http://localhost:5100', recon: 'http://localhost:5200', secret_alpha: 'whsec_alpha_dev', secret_beta: 'whsec_beta_dev' },
+  sandbox: { funding: 'https://remit-sandbox.value.al/funding', ledger: 'https://remit-sandbox.value.al/ledger', recon: 'https://remit-sandbox.value.al/reconciliation', secret_alpha: 'whsec_alpha_sandbox', secret_beta: 'whsec_beta_sandbox' },
+};
+function applyPreset(name) { const p = PRESETS[name]; if (!p) return; cfgKeys.forEach(k => $(k).value = p[k]); $('preset').value = name; }
+// Served from value.al → the public sandbox; served by Funding itself → local.
+applyPreset(location.hostname.endsWith('value.al') ? 'sandbox' : 'local');
+try { const c = JSON.parse(localStorage.getItem('remit-console') || '{}'); cfgKeys.forEach(k => { if (c[k]) $(k).value = c[k]; }); if (c.preset) $('preset').value = c.preset; } catch {}
+function saveCfg() { const c = { preset: $('preset').value }; cfgKeys.forEach(k => c[k] = $(k).value); try { localStorage.setItem('remit-console', JSON.stringify(c)); } catch {} log('ok', 'config saved'); }
 function uuid() { return crypto.randomUUID(); }
 function newAccount() { $('account').value = uuid(); $('idem').value = uuid(); }
 if (!$('account').value) newAccount();
@@ -208,7 +220,9 @@ async function exceptions() { await call('recon', 'GET', '/exceptions?open=true'
 async function sweep() { await call('recon', 'POST', '/sweeps/stuck', { raw: '' }); }
 async function resolve() { await call('recon', 'POST', `/exceptions/${$('exid').value}/resolve`, { body: { resolution: $('exreason').value } }); }
 
-log('ok', 'Remit console ready', 'Start with docker compose up -d and the three services, then Probe. Every request and response is logged here; secrets never leave this tab.');
+log('ok', 'Remit console ready', $('preset').value === 'sandbox'
+  ? 'Pointed at the public sandbox: no setup needed, press Probe. The sandbox is shared, rate-limited and wiped nightly; its webhook secrets are public on purpose.'
+  : 'Start with docker compose up -d and the three services, then Probe. Every request and response is logged here; secrets never leave this tab.');
 </script>
 </body>
 </html>

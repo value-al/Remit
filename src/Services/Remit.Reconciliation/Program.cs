@@ -13,12 +13,9 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddRemitTelemetry(builder.Configuration, "reconciliation");
 
 
-// The browser console (Funding's /console, or the copy on value.al) calls all three services
-// cross-origin. Any origin is allowed in Development only; production has no console.
-if (builder.Environment.IsDevelopment())
-{
-    builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("Idempotent-Replayed")));
-}
+// CORS for the console, rate limiting for the public sandbox, forwarded headers behind a proxy —
+// each only when configured (any-origin CORS in Development). See EdgeHosting.
+builder.Services.AddRemitEdge(builder.Configuration, builder.Environment);
 
 var connectionString = builder.Configuration.GetConnectionString("Reconciliation")
     ?? throw new InvalidOperationException("ConnectionStrings:Reconciliation is required.");
@@ -51,10 +48,7 @@ if (app.Configuration.GetValue("Database:MigrateOnStartup", app.Environment.IsDe
     await scope.ServiceProvider.GetRequiredService<ReconciliationDbContext>().Database.MigrateAsync();
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseCors();
-}
+app.UseRemitEdge();
 
 app.MapRemitHealth();
 app.MapGet("/", () => Results.Text("Remit Reconciliation — POST /statements/{provider}, GET /exceptions"));

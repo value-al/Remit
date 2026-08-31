@@ -1,0 +1,121 @@
+# The public Remit sandbox: the three services, PostgreSQL and RabbitMQ on one small host,
+# behind an existing Caddy on the external "web" network. Shared, rate-limited, wiped nightly.
+# Nothing here is a credential worth protecting: the sandbox exists to be poked.
+#
+#   docker compose -p remit-sandbox -f docker-compose.yml up -d --build
+#
+# Build context is a checkout of the Remit repository at ../src (see README.md).
+
+x-service: &service
+  restart: unless-stopped
+  networks: [web, sandbox]
+  environment: &env
+    ASPNETCORE_ENVIRONMENT: Production
+    ASPNETCORE_URLS: http://+:8080
+    Database__MigrateOnStartup: "true"       # a sandbox may migrate on boot; production must not (ADR-0008)
+    RabbitMq__Uri: amqp://remit:remit@remit-rabbitmq:5672
+    RabbitMq__Exchange: remit
+    Cors__Origins__0: https://value.al
+    Cors__Origins__1: https://www.value.al
+    RateLimit__PerMinute: "120"
+  deploy:
+    resources:
+      limits: { cpus: "0.50", memory: 384M }
+
+services:
+  remit-postgres:
+    image: postgres:17-alpine
+    container_name: remit-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: remit
+      POSTGRES_PASSWORD: remit
+      POSTGRES_DB: remit
+    volumes: [remit_pgdata:/var/lib/postgresql/data]
+    networks: [sandbox]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U remit"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  remit-rabbitmq:
+    image: rabbitmq:4-alpine
+    container_name: remit-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: remit
+      RABBITMQ_DEFAULT_PASS: remit
+    networks: [sandbox]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  remit-funding:
+    <<: *service
+    container_name: remit-funding
+    build: { context: ../../, dockerfile: src/Services/Remit.Funding/Dockerfile }
+    environment:
+      <<: *env
+      ConnectionStrings__Funding: Host=remit-postgres;Port=5432;Database=remit;Username=remit;Password=remit
+      Ledger__BaseUrl: http://remit-ledger:8080
+      Psp__Providers__alpha__Currencies__0: EUR
+      Psp__Providers__alpha__Currencies__1: USD
+      Psp__Providers__alpha__Currencies__2: GBP
+      Psp__Providers__alpha__WebhookSecret: whsec_alpha_sandbox
+      Psp__Providers__beta__Currencies__0: EUR
+      Psp__Providers__beta__Currencies__1: GBP
+      Psp__Providers__beta__WebhookSecret: whsec_beta_sandbox
+    depends_on:
+      remit-postgres: { condition: service_healthy }
+      remit-rabbitmq: { condition: service_healthy }
+
+  remit-ledger:
+    <<: *service
+    container_name: remit-ledger
+    build: { context: ../../, dockerfile: src/Services/Remit.Ledger/Dockerfile }
+    environment:
+      <<: *env
+      ConnectionStrings__Ledger: Host=remit-postgres;Port=5432;Database=remit;Username=remit;Password=remit
+    depends_on:
+      remit-postgres: { condition: service_healthy }
+      remit-rabbitmq: { condition: service_healthy }
+
+  remit-reconciliation:
+    <<: *service
+    container_name: remit-reconciliation
+    build: { context: ../../, dockerfile: src/Services/Remit.Reconciliation/Dockerfile }
+    environment:
+      <<: *env
+      ConnectionStrings__Reconciliation: Host=remit-postgres;Port=5432;Database=remit;Username=remit;Password=remit
+      Sweeps__StuckAfter: "00:10:00"
+    depends_on:
+      remit-postgres: { condition: service_healthy }
+      remit-rabbitmq: { condition: service_healthy }
+
+  # Wipes every table in the three schemas once a day (schema stays; migrations are not re-run).
+  remit-reset:
+    image: postgres:17-alpine
+    container_name: remit-reset
+    restart: unless-stopped
+    networks: [sandbox]
+    environment:
+      PGHOST: remit-postgres
+      PGUSER: remit
+      PGPASSWORD: remit
+      PGDATABASE: remit
+    volumes: ["./reset.sh:/reset.sh:ro"]
+    entrypoint: ["sh", "-c", "while true; do sleep 86400; sh /reset.sh; done"]
+    depends_on:
+      remit-postgres: { condition: service_healthy }
+
+volumes:
+  remit_pgdata:
+
+networks:
+  sandbox: {}
+  web:
+    external: true
+    name: sites_web
