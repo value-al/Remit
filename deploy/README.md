@@ -14,6 +14,7 @@ az deployment group create -g rg-remit-dev -n remit -f infra/bicep/main.bicep -p
 ACR=$(jq -r .properties.outputs.acrLoginServer.value out.json | cut -d. -f1)
 az acr build -r $ACR -t remit/funding:v1 -f src/Services/Remit.Funding/Dockerfile .
 az acr build -r $ACR -t remit/ledger:v1  -f src/Services/Remit.Ledger/Dockerfile .
+az acr build -r $ACR -t remit/reconciliation:v1 -f src/Services/Remit.Reconciliation/Dockerfile .
 
 # 3. Release. Migrations run as pre-upgrade Jobs; pods start only after they succeed.
 az aks get-credentials -g rg-remit-dev -n $(jq -r .properties.outputs.clusterName.value out.json)
@@ -34,7 +35,7 @@ Where secrets live and who can read them:
 
 | Secret | Written by | Read by | How |
 |---|---|---|---|
-| `ConnectionStrings--Funding` / `--Ledger` | Bicep, into Key Vault | funding, ledger, migrate jobs | CSI driver mounts and syncs to `remit-secrets`; pods use workload identity, no credential anywhere |
+| `ConnectionStrings--Funding` / `--Ledger` / `--Reconciliation` | Bicep, into Key Vault | the three services, migrate jobs | CSI driver mounts and syncs to `remit-secrets`; pods use workload identity, no credential anywhere |
 | `Psp--Providers--*--WebhookSecret` | Bicep placeholder; rotate in the vault | funding | same |
 | PostgreSQL admin password | you, at deploy time | Bicep only | never stored outside Key Vault |
 | ACR pull | — | kubelet | `AcrPull` role on the cluster's kubelet identity |

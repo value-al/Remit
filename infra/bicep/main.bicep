@@ -171,6 +171,13 @@ resource secretLedger 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   dependsOn: [kvSecretsOfficer]
 }
 
+resource secretReconciliation 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'ConnectionStrings--Reconciliation'
+  properties: { value: connectionString }
+  dependsOn: [kvSecretsOfficer]
+}
+
 // Provider webhook secrets are placeholders here; rotate them in the vault, never in code.
 resource secretAlpha 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: keyVault

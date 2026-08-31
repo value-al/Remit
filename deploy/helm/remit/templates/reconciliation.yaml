@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reconciliation
+  labels:
+    {{- include "remit.labels" . | nindent 4 }}
+    app.kubernetes.io/name: reconciliation
+spec:
+  # One replica: the stuck-movement sweep is not coordinated across instances yet.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: reconciliation
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: reconciliation
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: reconciliation
+          image: {{ .Values.image.registry }}/remit/reconciliation:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            {{- include "remit.commonEnv" . | nindent 12 }}
+            - name: Sweeps__StuckAfter
+              value: "00:30:00"
+          envFrom:
+            - secretRef:
+                name: remit-secrets
+          volumeMounts:
+            - name: secrets
+              mountPath: /mnt/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.reconciliation.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: remit-keyvault
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reconciliation
+  labels:
+    {{- include "remit.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: reconciliation
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

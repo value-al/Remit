@@ -49,6 +49,7 @@ jobs:
           ACR=$(echo "${{ steps.infra.outputs.acrLoginServer }}" | cut -d. -f1)
           az acr build -r "$ACR" -t remit/funding:${{ github.sha }} -f src/Services/Remit.Funding/Dockerfile .
           az acr build -r "$ACR" -t remit/ledger:${{ github.sha }}  -f src/Services/Remit.Ledger/Dockerfile .
+          az acr build -r "$ACR" -t remit/reconciliation:${{ github.sha }} -f src/Services/Remit.Reconciliation/Dockerfile .
 
       - name: Helm upgrade
         run: |

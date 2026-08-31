@@ -35,7 +35,7 @@ flowchart TB
         funding[Funding<br/>deposits & withdrawals<br/>state machines, idempotency]
         psp[PSP adapters<br/>routing, per-provider<br/>Countersign-verified webhooks]
         ledger[Ledger<br/>double-entry journal]
-        recon[Reconciliation<br/>statement matching,<br/>exception queue]
+        recon[Reconciliation<br/>own movement record from events,<br/>statement matching, exceptions, stuck sweep]
     end
 
     subgraph infra [Infrastructure]
@@ -55,7 +55,7 @@ flowchart TB
     funding -. outbox relay .-> mq
     psp -. outbox relay .-> mq
     mq --> ledger
-    mq --> recon
+    mq -- funding.# --> recon
     funding --> redis
     services --> otel
 ```

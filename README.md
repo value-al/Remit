@@ -24,6 +24,7 @@ like this has to make is **made, written down, and shown running**.
 | One PSP boundary with three outcomes; route by currency then health; submit sync, settle by signed webhook | [ADR-0006](docs/adr/0006-psp-boundary-and-webhooks.md) |
 | Ledger consumes with an inbox (exactly-once posting); withdrawals mirror deposits; one trace per money movement | [ADR-0007](docs/adr/0007-ledger-consumer-withdrawals-telemetry.md) |
 | AKS by Bicep; workload identity + Key Vault CSI instead of credentials; migrations as pre-upgrade Jobs; locked-down pods | [ADR-0008](docs/adr/0008-aks-workload-identity-key-vault.md) |
+| Reconciliation keeps its own record, matches statements on the reference only, raises five kinds of exception and never fixes anything | [ADR-0009](docs/adr/0009-reconciliation.md) |
 | Context and container diagrams, PCI scope boundary | [C4](docs/architecture/c4-context.md) |
 
 ## What runs today
@@ -56,6 +57,13 @@ like this has to make is **made, written down, and shown running**.
 - **OpenTelemetry** in both services: ASP.NET Core, HttpClient, Npgsql and every `Remit.*` span;
   W3C trace context carried in RabbitMQ headers, so one trace runs request → relay → publish →
   consume → postings. OTLP export to the compose file's Jaeger when `Otel:Endpoint` is set.
+- `Remit.Reconciliation` — consumes every Funding event into its own `movements` table (inbox,
+  out-of-order safe). `POST /statements/{provider}?from&to` takes the provider's CSV, matches on
+  the PSP reference and raises `UnknownAtPsp`, `AmountMismatch`, `SettledButNotFinal` (a lost
+  webhook) and `MissingAtPsp` — once per reference, however often the statement is re-posted.
+  A sweep raises `Stuck` for anything left in `Requested`/`SubmittedToPsp` too long — the gap
+  ADR-0006 left open. `GET /exceptions`, `POST /exceptions/{id}/resolve` with a written reason,
+  once. It never posts, never replays, never marks anything settled.
 - **Deployment** — `infra/bicep/main.bicep` (Log Analytics, ACR, Key Vault in RBAC mode, PostgreSQL
   Flexible Server, AKS with OIDC issuer + workload identity + Key Vault CSI add-on, one
   user-assigned identity federated to the `remit-workload` service account); `deploy/helm/remit`
@@ -71,7 +79,9 @@ like this has to make is **made, written down, and shown running**.
   stale timestamp, duplicate, wrong provider, failure with reason. Ledger tests on real PostgreSQL:
   same message twice posts once, six concurrent deliveries post once, balances per currency. And
   one **end-to-end** test hosting Funding and Ledger on the same containers: deposit → signed
-  webhook → relay → broker → consumer → wallet balance.
+  webhook → relay → broker → consumer → wallet balance. Reconciliation: the matcher's rules as pure
+  unit tests, and on real PostgreSQL — out-of-order events, a statement raising each exception kind
+  exactly once across two uploads, resolution with a reason and only once, the stuck sweep.
 
 Without a connection string the service runs entirely in memory. With one, it runs on
 PostgreSQL; with a `RabbitMq` section as well, the relay publishes.
@@ -83,6 +93,7 @@ docker build -f src/Services/Remit.Funding/Dockerfile -t remit/funding .
 docker compose up -d        # PostgreSQL, RabbitMQ, Redis, Jaeger
 dotnet run --project src/Services/Remit.Funding   # :5000 — migrates, relays to RabbitMQ
 dotnet run --project src/Services/Remit.Ledger    # :5100 — migrates, consumes, serves balances
+dotnet run --project src/Services/Remit.Reconciliation   # :5200 — consumes, takes statements, lists exceptions
 # Traces: http://localhost:16686 (Jaeger) — search service "funding" or "ledger"
 ```
 
@@ -106,6 +117,11 @@ curl -X POST localhost:5000/webhooks/psp/alpha -H 'Content-Type: application/jso
 # A moment later the ledger has posted it:
 curl "localhost:5100/accounts/11111111-1111-1111-1111-111111111111/balance?currency=EUR"
 # → {"accountId":"1111…","currency":"EUR","balance":100,"postings":1}
+
+# Month end: the provider's statement. Reconciliation matches it against what Funding told it.
+printf 'reference,kind,amount,currency,settled_at\n%s,deposit,100,EUR,%s\n' "<reference>" "$(date -u +%FT%TZ)" \
+  | curl -X POST "localhost:5200/statements/alpha?from=2026-08-01&to=2026-09-01" -H 'Content-Type: text/csv' --data-binary @-
+# → {"lines":1,"matched":1,"exceptions":0,"raised":[]}. Change the amount to 90 → an AmountMismatch exception.
 ```
 
 ## Roadmap
@@ -116,7 +132,7 @@ curl "localhost:5100/accounts/11111111-1111-1111-1111-111111111111/balance?curre
 | 5 | ~~PSP adapter boundary, two simulated providers, routing by currency and success rate; webhooks verified with Countersign~~ — done |
 | 6 | ~~Ledger consumer posts settlements; withdrawals; OpenTelemetry end to end~~ — done |
 | 7 | ~~AKS deployment with infrastructure as code; Key Vault; managed identity~~ — done |
-| 8 | Reconciliation against a statement file; exceptions endpoint |
+| 8 | ~~Reconciliation against a statement file; exceptions endpoint~~ — done |
 | 9 | SLO document; STRIDE threat model of the deposit flow |
 
 ## Layout
@@ -125,6 +141,7 @@ curl "localhost:5100/accounts/11111111-1111-1111-1111-111111111111/balance?curre
 src/BuildingBlocks/Remit.BuildingBlocks   Money, idempotency, outbox, messaging, telemetry
 src/Services/Remit.Funding                deposits & withdrawals (HTTP)
 src/Services/Remit.Ledger                 journal, consumer, balances (HTTP)
+src/Services/Remit.Reconciliation         movements from events, statements, exceptions, stuck sweep
 tests/                                    one test project per service
 docs/adr/                                 architecture decision records
 docs/architecture/                        C4 diagrams

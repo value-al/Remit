@@ -1,6 +1,6 @@
 # Schema changes run before the new version is rolled out, as Helm hooks, using the same image
 # in --migrate mode (ADR-0008). If a migration fails the release fails and the old pods keep running.
-{{- range $svc := list "funding" "ledger" }}
+{{- range $svc := list "funding" "ledger" "reconciliation" }}
 ---
 apiVersion: batch/v1
 kind: Job
