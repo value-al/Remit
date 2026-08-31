@@ -4,6 +4,10 @@ The one-picture version — a deposit's path with both trust boundaries — is
 [remit-overview.svg](remit-overview.svg) (light/dark variants beside it; embedded in the README).
 The Mermaid below is the formal C4.
 
+The one-picture version — a deposit's path with both trust boundaries — is
+[remit-overview.svg](remit-overview.svg) (light/dark variants beside it; embedded in the README).
+The Mermaid below is the formal C4.
+
 Drawn with Mermaid so it renders on GitHub and changes in pull requests.
 
 ## Context
