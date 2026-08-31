@@ -37,6 +37,8 @@
   fieldset details.how { margin:0 0 10px; background:transparent }
   ul.recipes { margin:8px 0 0; padding-left:16px; color:var(--muted); font-size:12px }
   ul.recipes li { margin:0 0 3px } ul.recipes b { color:var(--ink); font-weight:600 }
+  .filebtn { display:inline-block; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px; padding:6px 10px; cursor:pointer; margin:0 }
+  .filebtn:hover { border-color:var(--accent) } .filebtn input { display:none }
   @media (max-width:820px) { main { grid-template-columns:1fr } .side { border-right:0; border-bottom:1px solid var(--line) } }
 </style>
 </head>
@@ -116,8 +118,9 @@
           <li><b>SettledButNotFinal</b> — skip the webhook, but leave the reference in the CSV: the provider settled it, we never heard</li>
           <li><b>Stuck</b> — deposit, no webhook, wait for the window, then run the sweep</li>
         </ul>
-        <p class="cap">Post the same statement twice and nothing new is raised — one open exception per
-        kind, provider and reference, because month-end files get re-sent.</p>
+        <p class="cap">Download the statement, break a line in a spreadsheet, load it back and post it —
+        that is the loop a finance team actually runs. Post the same statement twice and nothing new is
+        raised: one open exception per kind, provider and reference, because month-end files get re-sent.</p>
       </details>
       <label>Provider · period (a statement is always one provider, one period)</label>
       <div class="row" style="margin-top:2px">
@@ -127,7 +130,17 @@
       </div>
       <label>Statement (CSV) — built from this session's settled movements; edit to break it</label>
       <textarea id="csv">reference,kind,amount,currency,settled_at</textarea>
-      <div class="row"><button onclick="buildStatement()">Build from session</button><button class="primary" onclick="postStatement()">POST statement</button><button onclick="exceptions()">Exceptions — mine</button><button onclick="exceptions(true)">all</button><button onclick="sweep()">Run stuck sweep</button></div>
+      <div class="row">
+        <button onclick="buildStatement()">Build from session</button>
+        <button onclick="downloadStatement()">Download .csv</button>
+        <label class="filebtn">Load .csv<input type="file" id="csvfile" accept=".csv,text/csv" onchange="loadStatement(this)"></label>
+        <button class="primary" onclick="postStatement()">POST statement</button>
+      </div>
+      <div class="row">
+        <button onclick="exceptions()">Exceptions — mine</button>
+        <button onclick="exceptions(true)">all</button>
+        <button onclick="sweep()">Run stuck sweep</button>
+      </div>
       <label>Resolve exception id · reason</label><input id="exid" placeholder="exception id"><input id="exreason" placeholder="why" style="margin-top:4px">
       <div class="row"><button onclick="resolve()">POST resolve</button></div>
     </fieldset>
@@ -345,6 +358,31 @@ function buildStatement() {
   const others = S.settled.length - mine.length;
   log('ok', `statement built: ${rows.length} movement(s) settled through ${provider} in this session`,
     others > 0 ? `${others} settled through another provider — build and post those separately.` : undefined);
+}
+function statementFileName() {
+  const day = ($('sto').value || new Date().toISOString()).slice(0, 10);
+  return `statement-${$('sprov').value || 'alpha'}-${day}.csv`;
+}
+function downloadStatement() {
+  const csv = $('csv').value;
+  const name = statementFileName();
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  log('ok', `saved ${name}`, `${Math.max(0, csv.split('\n').filter(Boolean).length - 1)} line(s). Edit it in a spreadsheet, load it back, and post it to see the difference become an exception.`);
+}
+function loadStatement(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    $('csv').value = String(reader.result).replace(/\r\n/g, '\n').trim();
+    log('ok', `loaded ${file.name}`, `${Math.max(0, $('csv').value.split('\n').length - 1)} line(s). Check the provider and period above still match this file, then POST.`);
+    input.value = '';
+  };
+  reader.onerror = () => log('bad', `could not read ${file.name}`, String(reader.error));
+  reader.readAsText(file);
 }
 async function postStatement() {
   const provider = $('sprov').value || 'alpha';
