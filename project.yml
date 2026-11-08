@@ -85,7 +85,7 @@ required_checks:
 
 quality:
   ci_must_pass: [build, architecture, check, gitleaks, semgrep]
-  mutation_score_changed_code: null   # target set from the pilot's first two weeks; see docs/tech-debt.md
+  mutation_score_changed_code: null   # not measured: a full run did not finish in 20 min (docs/tech-debt.md)
 
 budgets:
   cost_per_task_eur: null         # set from the pilot's first two weeks

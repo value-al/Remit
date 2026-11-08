@@ -19,7 +19,7 @@ the threat model and the ADRs) are listed at the end of `README.md` and are not 
 | Funding's `appsettings.Development.json` has no `Ledger:BaseUrl` | Locally, withdrawals check the in-memory balance stub, not the running Ledger | Add `"Ledger": { "BaseUrl": "http://localhost:5100" }` (or document why not) |
 | `README.md` embeds the overview picture twice; `docs/architecture/c4-context.md` repeats its first paragraph | Reads as a mistake on a public showcase | Delete the duplicates |
 | Unit and Testcontainers tests are not separated (no trait or project split) | `dotnet test` needs Docker; there is no fast unit-only command for the pre-push hook | Tag the PostgreSQL/RabbitMQ tests `[Trait("Category", "Integration")]` in new tests, or split projects |
-| GitHub Actions pinned to tags (`@v4`, `@v2`, `@v7`), not commit SHAs (Semgrep warning in `ci.yml`, `deploy.yml`) | A moved tag could run changed code in CI | Pin each action to its commit SHA |
+| GitHub Actions pinned to tags (`@v4`, `@v2`, `@v7`), not commit SHAs (Semgrep warning in `ci.yml`, `deploy.yml`, `merge-bot.yml`) | A moved tag could run changed code in CI | Pin each action to its commit SHA; `merge-bot.yml` is the Playbook template, so pin it there first |
 | `deploy.yml` interpolates `${{ inputs.name }}` and step outputs into `run:` scripts (Semgrep ERROR) | Shell injection in a job holding an Azure OIDC token | Issue #2; the `scan` job fails until it is fixed |
 
 ## Protocol gaps
@@ -30,7 +30,7 @@ the threat model and the ADRs) are listed at the end of `README.md` and are not 
 | Hosting contract / Coolify: the sandbox is deployed by the value.al Azure Pipeline on the host; AKS by a manual `deploy.yml` with Azure OIDC secrets in GitHub | Hosting contract: the platform deploys `main` and holds the secrets; only a deploy webhook token in GitHub | Move the sandbox to Coolify on Hetzner; write the AKS path as a stack-profile exception (the `dotnet` profile names Coolify) or retire it |
 | No commit SHA endpoint (`/health/live`, `/health/ready` don't report it) | Deploy workflow waits for the merged commit | Add the SHA as a build arg and return it from `/version` |
 | No holdout scenarios, no browser E2E (Playwright) | QA agent | Comes with the scenarios repo; the console at `/console` is the natural surface |
-| Mutation testing configured (`stryker-config.json`) but no score target | L2 gate | First full run: see `project.yml`; set the target from the pilot |
+| Mutation testing configured (`stryker-config.json`) but never measured: a full run (1,947 mutants, 937 tested) did not finish in 20 minutes, because most tests start PostgreSQL/RabbitMQ containers for every mutant run | L2 gate | Run `dotnet stryker --since:main` per PR (changed code only); for a baseline, run per project with the pure unit tests once integration tests carry a trait; set the score target from the pilot |
 | No pre-push hook (`.githooks/`) and no gitleaks pre-commit hook | Checks before push, secret scanning before it reaches GitHub | Add `.githooks/pre-push` + `checks` as in the pilot once a fast unit-only command exists |
 | `AGENTS_PAUSED` repository variable not set | Kill switch (the merge bot treats unset as not paused) | Set `AGENTS_PAUSED=false` when the platform's `Stop-Agents.ps1` covers this repo |
 | No machine account fork, GitHub App, taskrunner or reviewer agent | `reviewer@value-al-bot` is a required check, so the merge bot cannot merge yet | Comes with the protocol platform; until then the owner merges |
