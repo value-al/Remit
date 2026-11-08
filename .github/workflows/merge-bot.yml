@@ -140,8 +140,14 @@ jobs:
               }
               if (missing.length || failed.length) continue;
 
+              // The squash commit's message is set here, from the PR title and body, so
+              // GitHub doesn't copy Co-authored-by trailers from the branch's commits.
+              // Attribution lines never reach main, whatever an agent's commits contain.
+              const ATTRIBUTION = /^\s*(co-authored-by:|.*generated with \[?claude code|🤖)/i;
+              const message = (pr.body || '').split(/\r?\n/).filter(l => !ATTRIBUTION.test(l)).join('\n').trim();
               try {
-                await github.rest.pulls.merge({ owner, repo, pull_number: n, sha, merge_method: 'squash' });
+                await github.rest.pulls.merge({ owner, repo, pull_number: n, sha, merge_method: 'squash',
+                  commit_title: `${pr.title} (#${n})`, commit_message: message });
               } catch (e) {
                 core.warning(`#${n} not merged: ${e.message}`);
                 continue;

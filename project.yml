@@ -92,7 +92,7 @@ budgets:
   monthly_cap_eur: null
 
 autonomy:
-  level: L0                       # every PR needs human-approved
+  level: L2                       # owner override 2026-11-08: low and medium risk merge through the merge bot
   since: 2026-11-08
 
 scheduled_agents: []              # cleanup and doc gardening start with the platform
