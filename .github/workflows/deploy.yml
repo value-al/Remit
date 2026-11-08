@@ -32,31 +32,48 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # Every ${{ }} value reaches a script through env:, never pasted into it, so an input
+      # can't add shell commands to a job that holds an Azure token.
       - name: Deploy infrastructure
         id: infra
         env:
+          ENV_NAME: ${{ inputs.name }}
           REMIT_PG_PASSWORD: ${{ secrets.REMIT_PG_PASSWORD }}
           REMIT_DEPLOYER_OBJECT_ID: ${{ vars.REMIT_DEPLOYER_OBJECT_ID }}
         run: |
+          if [[ ! "$ENV_NAME" =~ ^[a-z0-9-]{1,40}$ ]]; then
+            echo "::error::Environment name must match ^[a-z0-9-]{1,40}\$"
+            exit 1
+          fi
           az deployment group create -g "$RG" -n remit -f infra/bicep/main.bicep -p infra/bicep/main.bicepparam \
-            -p name="${{ inputs.name }}" -o json > out.json
+            -p name="$ENV_NAME" -o json > out.json
           for k in clusterName acrLoginServer keyVaultName workloadIdentityClientId tenantId; do
             echo "$k=$(jq -r ".properties.outputs.$k.value" out.json)" >> "$GITHUB_OUTPUT"
           done
 
       - name: Build images in the registry
+        env:
+          ACR_LOGIN_SERVER: ${{ steps.infra.outputs.acrLoginServer }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          ACR=$(echo "${{ steps.infra.outputs.acrLoginServer }}" | cut -d. -f1)
-          az acr build -r "$ACR" -t remit/funding:${{ github.sha }} -f src/Services/Remit.Funding/Dockerfile .
-          az acr build -r "$ACR" -t remit/ledger:${{ github.sha }}  -f src/Services/Remit.Ledger/Dockerfile .
-          az acr build -r "$ACR" -t remit/reconciliation:${{ github.sha }} -f src/Services/Remit.Reconciliation/Dockerfile .
+          ACR=$(echo "$ACR_LOGIN_SERVER" | cut -d. -f1)
+          az acr build -r "$ACR" -t "remit/funding:$IMAGE_TAG" -f src/Services/Remit.Funding/Dockerfile .
+          az acr build -r "$ACR" -t "remit/ledger:$IMAGE_TAG"  -f src/Services/Remit.Ledger/Dockerfile .
+          az acr build -r "$ACR" -t "remit/reconciliation:$IMAGE_TAG" -f src/Services/Remit.Reconciliation/Dockerfile .
 
       - name: Helm upgrade
+        env:
+          CLUSTER_NAME: ${{ steps.infra.outputs.clusterName }}
+          ACR_LOGIN_SERVER: ${{ steps.infra.outputs.acrLoginServer }}
+          IMAGE_TAG: ${{ github.sha }}
+          WORKLOAD_CLIENT_ID: ${{ steps.infra.outputs.workloadIdentityClientId }}
+          TENANT_ID: ${{ steps.infra.outputs.tenantId }}
+          KEY_VAULT_NAME: ${{ steps.infra.outputs.keyVaultName }}
         run: |
-          az aks get-credentials -g "$RG" -n "${{ steps.infra.outputs.clusterName }}" --overwrite-existing
+          az aks get-credentials -g "$RG" -n "$CLUSTER_NAME" --overwrite-existing
           helm upgrade --install remit deploy/helm/remit -n remit --create-namespace --wait --timeout 10m \
-            --set image.registry="${{ steps.infra.outputs.acrLoginServer }}" \
-            --set image.tag="${{ github.sha }}" \
-            --set identity.clientId="${{ steps.infra.outputs.workloadIdentityClientId }}" \
-            --set identity.tenantId="${{ steps.infra.outputs.tenantId }}" \
-            --set keyVault.name="${{ steps.infra.outputs.keyVaultName }}"
+            --set image.registry="$ACR_LOGIN_SERVER" \
+            --set image.tag="$IMAGE_TAG" \
+            --set identity.clientId="$WORKLOAD_CLIENT_ID" \
+            --set identity.tenantId="$TENANT_ID" \
+            --set keyVault.name="$KEY_VAULT_NAME"
