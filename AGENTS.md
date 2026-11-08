@@ -1,8 +1,9 @@
 # AGENTS.md — Remit
 
 The map for agents working in this repo. It points to where things are; the details live in
-`docs/`. This project follows the value-al AI Development Protocol at autonomy level **L0**:
-every PR needs the owner's `human-approved`.
+`docs/`. This project follows the value-al AI Development Protocol at autonomy level **L2** (owner override, 2026-11-08): low- and medium-risk PRs
+merge through the merge bot once CI and the reviewer pass; high-risk PRs and
+protected paths need the owner's `human-approved`.
 
 **This repository is public.** The protocol lets agents run only in private repos, so no
 agent runs here unattended until the owner decides (see `docs/tech-debt.md`). Everything
