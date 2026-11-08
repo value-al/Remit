@@ -9,6 +9,7 @@
     <Project Path="src/Services/Remit.Reconciliation/Remit.Reconciliation.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Remit.Architecture.Tests/Remit.Architecture.Tests.csproj" />
     <Project Path="tests/Remit.Funding.Tests/Remit.Funding.Tests.csproj" />
     <Project Path="tests/Remit.Ledger.Tests/Remit.Ledger.Tests.csproj" />
     <Project Path="tests/Remit.Reconciliation.Tests/Remit.Reconciliation.Tests.csproj" />

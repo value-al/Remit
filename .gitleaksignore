@@ -1,0 +1,3 @@
+# Known gitleaks false positives, one fingerprint per line, with the reason above it.
+# README.md: the example Idempotency-Key in the curl walkthrough is a made-up UUID, not a secret.
+e7e1ce76d68dc3a59c2f8ccdd19c30ffcd001436:README.md:generic-api-key:43

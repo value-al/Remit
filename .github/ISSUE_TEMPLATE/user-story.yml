@@ -1,0 +1,62 @@
+name: User story
+description: Something a user can do, written so the client can approve and check it
+title: "<Short title>"
+labels: [story]
+body:
+  - type: textarea
+    id: story
+    attributes:
+      label: Story
+      description: In the client's language.
+      value: |
+        As a <type of user>,
+        I can <do something>,
+        so that <benefit>.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: The client checks these at the demo, by clicking.
+      value: |
+        - Given <situation>, when <action>, then <result>.
+    validations:
+      required: true
+  - type: textarea
+    id: not-included
+    attributes:
+      label: Not included
+      description: Anything someone might assume is part of this.
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size
+      options: [S, M, L]
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk tier
+      description: Set by the planner; the needs_human paths in project.yml can raise it.
+      options: [Low, Medium, High]
+  - type: textarea
+    id: paths
+    attributes:
+      label: Affected paths and dependencies
+      description: Folders or files the change will touch, and linked issues it depends on.
+  - type: textarea
+    id: diagram
+    attributes:
+      label: What changes
+      description: A small diagram, consistent with ARCHITECTURE.md.
+  - type: checkboxes
+    id: ready
+    attributes:
+      label: Definition of Ready
+      options:
+        - label: Written so the client understands it
+        - label: Acceptance criteria are Given/When/Then and the client can check them by clicking
+        - label: Client has approved it
+        - label: One outcome, sized for a single PR
+        - label: Holdout scenarios exist
+        - label: Every product decision it needs is written down

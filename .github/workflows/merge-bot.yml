@@ -1,0 +1,153 @@
+# Merge bot: the only path into main (AI Development Protocol, GitHub Free mode).
+# It never checks out or runs PR code; it reads everything through the API.
+# Rules come from project.yml on main, never from the PR.
+name: Merge bot
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
+  check_run:
+    types: [completed]           # checks posted by value-al-bot
+  workflow_run:
+    workflows: [CI]              # GitHub Actions' own checks don't fire check_run
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write                # merge
+  pull-requests: write           # labels, comments
+  issues: write
+  checks: read
+  actions: write                 # start the deploy workflow after a merge
+
+concurrency:
+  group: merge-bot
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read project.yml from main
+        id: cfg
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${{ github.repository }}/contents/project.yml?ref=${{ github.event.repository.default_branch }}" \
+               -H "Accept: application/vnd.github.raw" > project.yml 2>/dev/null; then
+            yq -o=json '.' project.yml > project.json
+          else
+            echo '{}' > project.json
+          fi
+          echo "json=$(jq -c . project.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Evaluate and merge
+        uses: actions/github-script@v7
+        env:
+          PROJECT_JSON: ${{ steps.cfg.outputs.json }}
+          AGENTS_PAUSED: ${{ vars.AGENTS_PAUSED }}
+          OWNER_LOGIN: ${{ vars.OWNER_LOGIN || 'Aldiger' }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const cfg = JSON.parse(process.env.PROJECT_JSON || '{}');
+            const ownerLogin = process.env.OWNER_LOGIN;
+            const BOT = 'github-actions[bot]';
+            const MARK = '<!-- merge-bot:approved ';
+
+            // ---- Approval bookkeeping on label and push events -------------
+            const ev = context.eventName;
+            const p = context.payload;
+            if (ev === 'pull_request_target' && p.action === 'labeled' && p.label.name === 'human-approved') {
+              if (p.sender.login !== ownerLogin) {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: p.number, name: 'human-approved' }).catch(() => {});
+                await github.rest.issues.createComment({ owner, repo, issue_number: p.number,
+                  body: `Removed \`human-approved\`: only @${ownerLogin} can approve.` });
+              } else {
+                const sha = p.pull_request.head.sha;
+                await github.rest.issues.createComment({ owner, repo, issue_number: p.number,
+                  body: `${MARK}sha=${sha} -->Approved at \`${sha.slice(0, 7)}\`. A new push removes the approval.` });
+              }
+            }
+            if (ev === 'pull_request_target' && p.action === 'synchronize') {
+              const labels = p.pull_request.labels.map(l => l.name);
+              if (labels.includes('human-approved')) {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: p.number, name: 'human-approved' }).catch(() => {});
+                await github.rest.issues.createComment({ owner, repo, issue_number: p.number,
+                  body: 'New commits pushed: `human-approved` removed. Approve again after checking them.' });
+              }
+            }
+
+            if (process.env.AGENTS_PAUSED === 'true') { core.notice('Kill switch on (AGENTS_PAUSED=true): no merges.'); return; }
+
+            // ---- Rules from project.yml on main -----------------------------
+            const level = (cfg.autonomy && cfg.autonomy.level) || 'L0';
+            const allowedTiers = { L0: [], L1: ['low'], L2: ['low', 'medium'] }[level] || [];
+            const ALWAYS_HUMAN = ['.github/**', 'project.yml', '.githooks/**', 'CODEOWNERS'];
+            const needsHumanGlobs = [...ALWAYS_HUMAN, ...(cfg.needs_human || [])];
+            const protectedTests = cfg.protected_tests || [];
+            const required = cfg.required_checks || ['ci@github-actions', 'scan@github-actions', 'reviewer@value-al-bot'];
+
+            const toRegex = g => new RegExp('^' + g.split('**').map(part =>
+              part.split('*').map(s => s.replace(/[.+^${}()|[\]\\?]/g, '\\$&')).join('[^/]*')).join('.*') + '$');
+            const matches = (globs, f) => globs.some(g => toRegex(g).test(f));
+
+            const prs = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', per_page: 100 });
+            for (const pr of prs) {
+              const n = pr.number, sha = pr.head.sha;
+              if (pr.draft || /^WIP/i.test(pr.title)) continue;
+              const labels = pr.labels.map(l => l.name);
+
+              // Risk tier: the planner's label, raised by the paths the PR touches.
+              const order = ['low', 'medium', 'high'];
+              let tier = order.find(t => labels.includes(`risk-${t}`)) || 'high';   // unlabelled = high
+              const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: n, per_page: 100 });
+              const reasons = [];
+              for (const f of files) {
+                const names = [f.filename, f.previous_filename].filter(Boolean);
+                if (names.some(x => matches(needsHumanGlobs, x))) reasons.push(`high-risk path ${f.filename}`);
+                if (f.status !== 'added' && names.some(x => matches(protectedTests, x))) reasons.push(`existing test ${f.status}: ${f.filename}`);
+              }
+              if (reasons.length) tier = 'high';
+              const needsHuman = !allowedTiers.includes(tier);
+
+              // Required checks, each from its expected source, all on the head commit.
+              const runs = await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: sha, per_page: 100 });
+              const latest = {};
+              for (const r of runs) {
+                const k = `${r.name}@${r.app && r.app.slug}`;
+                if (!latest[k] || new Date(r.started_at) > new Date(latest[k].started_at)) latest[k] = r;
+              }
+              const missing = required.filter(k => !latest[k] || latest[k].status !== 'completed' || latest[k].conclusion !== 'success');
+              const failed = Object.values(latest).filter(r => r.status === 'completed' && ['failure', 'cancelled', 'timed_out', 'action_required'].includes(r.conclusion));
+
+              // Approval: owner's label plus the bot's note for exactly this commit.
+              let approved = false;
+              if (labels.includes('human-approved')) {
+                const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: n, per_page: 100 });
+                approved = comments.some(c => c.user.login === BOT && c.body.startsWith(`${MARK}sha=${sha} -->`));
+              }
+
+              const summary = `#${n} tier=${tier} level=${level} needsHuman=${needsHuman} approved=${approved} missing=[${missing}] failed=[${failed.map(r => r.name)}]`;
+              core.info(summary + (reasons.length ? ` reasons: ${reasons.join('; ')}` : ''));
+
+              if (needsHuman && !approved) {
+                if (!labels.includes('needs-human')) await github.rest.issues.addLabels({ owner, repo, issue_number: n, labels: ['needs-human'] });
+                continue;
+              }
+              if (missing.length || failed.length) continue;
+
+              try {
+                await github.rest.pulls.merge({ owner, repo, pull_number: n, sha, merge_method: 'squash' });
+              } catch (e) {
+                core.warning(`#${n} not merged: ${e.message}`);
+                continue;
+              }
+              await github.rest.issues.removeLabel({ owner, repo, issue_number: n, name: 'needs-human' }).catch(() => {});
+              await github.rest.issues.createComment({ owner, repo, issue_number: n,
+                body: `Merged by the merge bot at \`${sha.slice(0, 7)}\` (tier ${tier}, ${level}${needsHuman ? ', approved by the owner' : ''}).` });
+              // GITHUB_TOKEN merges start no workflows; workflow_dispatch is the exception.
+              await github.rest.actions.createWorkflowDispatch({ owner, repo, workflow_id: 'deploy.yml',
+                ref: context.payload.repository.default_branch }).catch(() => core.info('No deploy.yml to start.'));
+            }
