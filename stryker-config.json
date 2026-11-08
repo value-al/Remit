@@ -1,0 +1,22 @@
+{
+  "stryker-config": {
+    "solution": "Remit.slnx",
+    "configuration": "Release",
+    "mutation-level": "Standard",
+    "reporters": ["progress", "html", "json"],
+    "mutate": [
+      "!**/Migrations/**",
+      "!**/Program.cs",
+      "!**/DesignTimeDbContextFactory.cs"
+    ],
+    "thresholds": {
+      "high": 80,
+      "low": 60,
+      "break": 0
+    },
+    "since": {
+      "enabled": false,
+      "target": "main"
+    }
+  }
+}

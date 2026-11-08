@@ -1,0 +1,98 @@
+# Project settings for the value-al AI Development Protocol.
+# Owned by Aldiger: changes need human-approved (see the protocol's merge bot rules).
+
+name: Remit
+repo: value-al/Remit
+app: Remit                       # App option on the value-al Portfolio Project
+stack_profile: dotnet            # see "Stack profiles" in the protocol
+level: light                     # value-al Playbook level (light | full)
+
+vision: >
+  Open-source reference money-movement backend in .NET: idempotent deposits
+  and withdrawals through payment providers, a double-entry ledger, an outbox
+  between services and reconciliation against provider statements. Small on
+  purpose; every decision is made, written down as an ADR and shown running.
+
+never: # what the system must never do
+  - Move money twice for one request, webhook or message (idempotency keys, state machines, inboxes)
+  - Write a state change without its outbox message in the same transaction (no dual write)
+  - Post an unbalanced journal entry, or edit or delete a posted one
+  - Let reconciliation fix, post or replay anything; it only raises exceptions
+  - Handle card data, or put a real credential in this public repository
+  - Let one service read another service's schema
+
+commands:
+  install: dotnet restore && dotnet tool restore
+  build: dotnet build -c Release
+  check: dotnet test -c Release                               # unit + PostgreSQL/RabbitMQ tests (Testcontainers, needs Docker)
+  architecture: dotnet test tests/Remit.Architecture.Tests -c Release   # NetArchTest dependency rules
+  mutation: dotnet stryker --since:main                       # Stryker.NET on changed code; laptop only, not in CI
+  infra_validate: bicep build infra/bicep/main.bicep && helm lint deploy/helm/remit
+  run_local: docker compose up -d && dotnet run --project src/Services/Remit.Funding   # plus Ledger and Reconciliation, see README
+
+environments:
+  local:
+    url: http://localhost:5000/console   # Funding; Ledger :5100, Reconciliation :5200
+    data: docker compose PostgreSQL (schemas funding, ledger, reconciliation); Funding alone runs in memory
+  test:
+    url: null
+    data: throwaway PostgreSQL and RabbitMQ containers per test class (Testcontainers)
+  sandbox:
+    url: https://remit-sandbox.value.al  # public demo, no auth, rate-limited, wiped nightly
+    deploy: value.al Azure Pipeline on the host, deploy/sandbox/docker-compose.yml
+  staging: null                   # none; see docs/tech-debt.md
+  production: null                # reference project; AKS path exists (deploy.yml, manual) but nothing runs there
+
+# Paths that make a change High tier: the merge bot needs human-approved.
+# Money movement, the ledger and reconciliation are high-risk throughout.
+needs_human:
+  - project.yml
+  - .github/**
+  - .gitleaksignore               # exceptions to secret scanning
+  - deploy/**
+  - infra/**
+  - docker-compose.yml
+  - "**/Dockerfile"
+  - .dockerignore
+  - nuget.config                  # package sources
+  - Directory.Build.props
+  - dotnet-tools.json
+  - "**/appsettings*.json"        # connection strings, webhook secrets, provider config
+  - "**/Migrations/**"            # schema
+  - src/Services/*/Program.cs     # wiring, migrations on startup, which store is used
+  - src/BuildingBlocks/Remit.BuildingBlocks/Money.cs
+  - src/BuildingBlocks/Remit.BuildingBlocks/Idempotency/**
+  - src/BuildingBlocks/Remit.BuildingBlocks/Outbox/**
+  - src/BuildingBlocks/Remit.BuildingBlocks/Messaging/**
+  - src/BuildingBlocks/Remit.BuildingBlocks/Hosting/**   # CORS, rate limit, forwarded headers, health
+  - src/Services/Remit.Funding/Deposits/**               # payments
+  - src/Services/Remit.Funding/Withdrawals/**            # payments, balance check
+  - src/Services/Remit.Funding/Psp/**                    # provider calls, webhook signatures
+  - src/Services/Remit.Funding/Persistence/**            # schema, idempotency store, outbox
+  - src/Services/Remit.Funding/Messaging/**              # outbox relay
+  - src/Services/Remit.Ledger/**                         # the journal
+  - src/Services/Remit.Reconciliation/**                 # statements, exceptions, sweep
+
+# Existing test files: modifying, deleting or renaming them needs human-approved.
+protected_tests:
+  - tests/**
+
+# Checks the merge bot must see green on the head commit, as name@source.
+required_checks:
+  - ci@github-actions             # build, architecture tests, all tests
+  - scan@github-actions           # gitleaks (whole history), Semgrep CE
+  - reviewer@value-al-bot
+
+quality:
+  ci_must_pass: [build, architecture, check, gitleaks, semgrep]
+  mutation_score_changed_code: null   # not measured: a full run did not finish in 20 min (docs/tech-debt.md)
+
+budgets:
+  cost_per_task_eur: null         # set from the pilot's first two weeks
+  monthly_cap_eur: null
+
+autonomy:
+  level: L0                       # every PR needs human-approved
+  since: 2026-11-08
+
+scheduled_agents: []              # cleanup and doc gardening start with the platform

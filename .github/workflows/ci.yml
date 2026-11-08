@@ -1,14 +1,24 @@
+# Checks on every PR and on main. The merge bot needs a result on every PR, so PRs have no
+# paths-ignore. Job names are the check names in project.yml (required_checks).
 name: CI
 
 on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]
+    types: [ opened, synchronize, reopened ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  ci:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET
@@ -17,4 +27,24 @@ jobs:
           dotnet-version: 10.0.x
       - run: dotnet restore
       - run: dotnet build --no-restore -c Release
+      # Fix-it messages tell you how to repair a broken dependency direction (ARCHITECTURE.md).
+      - name: Architecture tests
+        run: dotnet test tests/Remit.Architecture.Tests --no-build -c Release
+      # Includes the PostgreSQL/RabbitMQ tests (Testcontainers; Docker is on the runner).
       - run: dotnet test --no-build -c Release --verbosity normal
+
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      # Known false positives are listed in .gitleaksignore with the reason.
+      - name: Secrets (gitleaks, whole history)
+        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.24.3 git /repo --no-banner --redact
+      # Fails on ERROR findings only; warnings are tracked in docs/tech-debt.md.
+      - name: Static analysis (Semgrep CE)
+        run: >-
+          docker run --rm -v "$PWD:/src" -w /src semgrep/semgrep:1.140.0
+          semgrep scan --config p/default --metrics off --severity ERROR --error
+          --exclude bin --exclude obj --exclude TestResults --exclude StrykerOutput
