@@ -8,7 +8,6 @@ the threat model and the ADRs) are listed at the end of `README.md` and are not 
 
 | Question | Why it matters | Until the owner decides |
 |---|---|---|
-| **Public repo: agents may not run here until the owner decides.** The protocol's non-negotiable says agents run only in private repos; Remit is public on purpose (open-source reference). | The taskrunner must not pick up issues here; anything an agent pushes is public at once | No unattended agents. The merge bot is installed: it runs on `pull_request_target`, never checks out PR code, and still needs `human-approved` for every PR at L0. Options: keep it human-only, run agents in a private mirror and publish merged `main`, or write an exception into the protocol |
 
 ## Code
 
