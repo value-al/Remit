@@ -5,9 +5,10 @@ The map for agents working in this repo. It points to where things are; the deta
 merge through the merge bot once CI and the reviewer pass; high-risk PRs and
 protected paths need the owner's `human-approved`.
 
-**This repository is public.** The protocol lets agents run only in private repos, so no
-agent runs here unattended until the owner decides (see `docs/tech-debt.md`). Everything
-you commit is visible to the world: no real credentials, no client names, nothing private.
+**This repository is public.** Agents run here under the protocol's public repo
+exception (2026-11-08): the taskrunner takes only issues the owner wrote and approved,
+and comments never reach agents. Everything you commit is visible to the world: no real
+credentials, no client names, nothing private.
 
 ## What this is
 
