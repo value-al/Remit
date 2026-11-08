@@ -84,7 +84,9 @@ jobs:
             // ---- Rules from project.yml on main -----------------------------
             const level = (cfg.autonomy && cfg.autonomy.level) || 'L0';
             const allowedTiers = { L0: [], L1: ['low'], L2: ['low', 'medium'] }[level] || [];
-            const ALWAYS_HUMAN = ['.github/**', 'project.yml', '.githooks/**', 'CODEOWNERS'];
+            // Files that steer agents or CI: an agent must never loosen its own rules.
+            const ALWAYS_HUMAN = ['.github/**', 'project.yml', '.githooks/**', 'CODEOWNERS',
+              '.claude/**', 'AGENTS.md', 'CLAUDE.md', '.dependency-cruiser.cjs', '.importlinter'];
             const needsHumanGlobs = [...ALWAYS_HUMAN, ...(cfg.needs_human || [])];
             const protectedTests = cfg.protected_tests || [];
             const required = cfg.required_checks || ['ci@github-actions', 'scan@github-actions', 'reviewer@value-al-bot'];
